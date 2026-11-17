@@ -1,0 +1,707 @@
+package com.nekroz.meowsub.ui.editor
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.CallMerge
+import androidx.compose.material.icons.automirrored.filled.CallSplit
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Height
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nekroz.meowsub.R
+import com.nekroz.meowsub.data.subtitle.SubtitleLine
+import com.nekroz.meowsub.data.subtitle.TimeFormat
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.pow
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
+    val ui by vm.uiState.collectAsStateWithLifecycle()
+    var showUnsavedDialog by remember { mutableStateOf(false) }
+    // Caret position in the selected line's text, used by "split".
+    var caret by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(ui.selectedId) { caret = -1 }
+
+    val requestClose = { if (ui.dirty) showUnsavedDialog = true else vm.close() }
+    BackHandler(onBack = requestClose)
+    // Registered later, so it wins while multi-select mode is active.
+    BackHandler(enabled = ui.selectionMode, onBack = vm::clearSelection)
+
+    Scaffold(
+        topBar = {
+            EditorTopBar(
+                ui = ui,
+                onBack = requestClose,
+                onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.text?.length ?: 0) },
+                vm = vm,
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding()
+        ) {
+            WaveformPanel(vm, ui, Modifier.fillMaxWidth().weight(1f))
+            PlaybackBar(vm, hasSelection = ui.selected != null, audioReady = ui.audio is AudioStatus.Ready)
+            HorizontalDivider()
+            LineEditor(
+                line = ui.selected,
+                onStart = vm::setStart,
+                onEnd = vm::setEnd,
+                onSetStartAtCursor = vm::setStartAtCursor,
+                onSetEndAtCursor = vm::setEndAtCursor,
+                onText = vm::updateText,
+                onCaret = { caret = it },
+                onPrevious = vm::selectPrevious,
+                onNext = vm::selectNext,
+            )
+            HorizontalDivider()
+            SubtitleList(
+                lines = ui.lines,
+                selectedId = ui.selectedId,
+                checkedIds = ui.checkedIds,
+                loading = ui.loading,
+                onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.select(it) },
+                onLongClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.startSelection(it) },
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
+        }
+    }
+
+    if (showUnsavedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsavedDialog = false },
+            title = { Text(stringResource(R.string.unsaved_title)) },
+            text = { Text(stringResource(R.string.unsaved_body, ui.title)) },
+            confirmButton = {
+                TextButton(onClick = { showUnsavedDialog = false; vm.save(closeAfter = true) }) {
+                    Text(stringResource(R.string.unsaved_save))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showUnsavedDialog = false; vm.close() }) {
+                        Text(stringResource(R.string.unsaved_discard))
+                    }
+                    TextButton(onClick = { showUnsavedDialog = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> Unit, vm: EditorViewModel) {
+    if (ui.selectionMode) {
+        SelectionTopBar(ui, vm)
+        return
+    }
+    val hasSel = ui.selected != null
+    var menuOpen by remember { mutableStateOf(false) }
+    TopAppBar(
+        expandedHeight = 56.dp,
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
+            }
+        },
+        title = {
+            Column {
+                Text(
+                    text = if (ui.dirty) "${ui.title} •" else ui.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = ui.subtitleName ?: stringResource(R.string.editor_new_subtitle),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        },
+        actions = {
+            BarIcon(Icons.AutoMirrored.Filled.Undo, R.string.action_undo, ui.canUndo, vm::undo)
+            BarIcon(Icons.AutoMirrored.Filled.Redo, R.string.action_redo, ui.canRedo, vm::redo)
+            BarIcon(Icons.Filled.Add, R.string.action_add_after, !ui.loading, vm::addLineAfter)
+            BarIcon(Icons.Outlined.Delete, R.string.action_delete, hasSel, vm::deleteSelected)
+            BarIcon(Icons.Filled.ContentCopy, R.string.action_copy, hasSel, vm::copySelection)
+            BarIcon(Icons.AutoMirrored.Filled.Notes, R.string.action_copy_text, hasSel, vm::copyPlainText)
+            BarIcon(Icons.Filled.ContentCut, R.string.action_cut, hasSel, vm::cutSelection)
+            BarIcon(Icons.Filled.ContentPaste, R.string.action_paste, !ui.loading, vm::paste)
+            BarIcon(Icons.AutoMirrored.Filled.CallSplit, R.string.action_split, hasSel, onSplit)
+            BarIcon(Icons.AutoMirrored.Filled.CallMerge, R.string.action_merge, hasSel, vm::mergeWithNext)
+            if (ui.saving) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            } else {
+                BarIcon(Icons.Filled.Save, R.string.action_save, ui.dirty && !ui.loading) { vm.save() }
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Filled.MoreVert, stringResource(R.string.action_more))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.action_insert_before)) },
+                        leadingIcon = { Icon(Icons.Filled.VerticalAlignTop, null) },
+                        enabled = !ui.loading,
+                        onClick = { menuOpen = false; vm.insertLineBefore() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.action_sort)) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Sort, null) },
+                        enabled = ui.lines.size > 1,
+                        onClick = { menuOpen = false; vm.sortByTime() },
+                    )
+                }
+            }
+        },
+    )
+}
+
+/** Contextual app bar shown while lines are ticked in multi-select mode. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(ui: EditorUiState, vm: EditorViewModel) {
+    TopAppBar(
+        expandedHeight = 56.dp,
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ),
+        navigationIcon = {
+            IconButton(onClick = vm::clearSelection) {
+                Icon(Icons.Filled.Close, stringResource(R.string.action_exit_selection))
+            }
+        },
+        title = { Text(stringResource(R.string.selection_count, ui.checkedIds.size)) },
+        actions = {
+            BarIcon(Icons.Filled.SelectAll, R.string.action_select_all, ui.checkedIds.size < ui.lines.size, vm::selectAll)
+            BarIcon(Icons.Filled.ContentCopy, R.string.action_copy, true, vm::copySelection)
+            BarIcon(Icons.AutoMirrored.Filled.Notes, R.string.action_copy_text, true, vm::copyPlainText)
+            BarIcon(Icons.Filled.ContentCut, R.string.action_cut, true, vm::cutSelection)
+            BarIcon(Icons.Filled.ContentPaste, R.string.action_paste, true, vm::paste)
+            BarIcon(Icons.Outlined.Delete, R.string.action_delete, true, vm::deleteSelected)
+        },
+    )
+}
+
+@Composable
+private fun BarIcon(icon: ImageVector, label: Int, enabled: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled) {
+        Icon(icon, contentDescription = stringResource(label))
+    }
+}
+
+@Composable
+private fun WaveformPanel(vm: EditorViewModel, ui: EditorUiState, modifier: Modifier) {
+    val viewport by vm.viewport.collectAsStateWithLifecycle()
+    val playback by vm.playback.collectAsStateWithLifecycle()
+    val snapGuide by vm.snapGuide.collectAsStateWithLifecycle()
+    val audio = ui.audio
+    Box(modifier) {
+        Waveform(
+            peaks = (audio as? AudioStatus.Ready)?.peaks,
+            lines = ui.lines,
+            selected = ui.selected,
+            viewport = viewport,
+            playback = playback,
+            snapGuideMs = snapGuide,
+            previousLabel = stringResource(R.string.waveform_previous),
+            nextLabel = stringResource(R.string.waveform_next),
+            onWidthChanged = vm::setViewportWidth,
+            onTransform = vm::transformViewport,
+            onTap = vm::onWaveformTap,
+            onMarkerDragStart = vm::beginMarkerDrag,
+            onMarkerDrag = vm::dragMarker,
+            onMarkerDragEnd = vm::endMarkerDrag,
+            modifier = Modifier.fillMaxSize(),
+        )
+        when (audio) {
+            is AudioStatus.Loading -> Surface(
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                shape = MaterialTheme.shapes.medium,
+                tonalElevation = 3.dp,
+                shadowElevation = 2.dp,
+            ) {
+                Column(Modifier.padding(16.dp).width(240.dp)) {
+                    Text(
+                        stringResource(R.string.audio_loading, "${(audio.progress * 100).toInt()}%"),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LinearProgressIndicator(
+                        progress = { audio.progress },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
+            }
+
+            AudioStatus.None -> StatusChip(stringResource(R.string.audio_none), Modifier.align(Alignment.TopEnd))
+            is AudioStatus.Failed -> StatusChip(
+                stringResource(R.string.audio_failed, audio.reason),
+                Modifier.align(Alignment.TopEnd),
+                error = true,
+            )
+
+            is AudioStatus.Ready -> Unit
+        }
+    }
+}
+
+@Composable
+private fun StatusChip(text: String, modifier: Modifier, error: Boolean = false) {
+    Surface(
+        modifier = modifier.padding(top = 24.dp, end = 8.dp),
+        shape = MaterialTheme.shapes.small,
+        color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+        )
+    }
+}
+
+@Composable
+private fun PlaybackBar(vm: EditorViewModel, hasSelection: Boolean, audioReady: Boolean) {
+    val playback by vm.playback.collectAsStateWithLifecycle()
+    val viewport by vm.viewport.collectAsStateWithLifecycle()
+    val volume by vm.volume.collectAsStateWithLifecycle()
+    val snapEnabled by vm.snapEnabled.collectAsStateWithLifecycle()
+    val lineEnabled = audioReady && hasSelection
+    val scroll = rememberScrollState()
+    // Wide screens: sliders share the leftover width. Narrow screens: fixed sliders, row scrolls.
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val wide = maxWidth >= 880.dp
+    val sliderWidth = if (wide) null else 128.dp
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (wide) Modifier else Modifier.horizontalScroll(scroll))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val sliderModifier = if (wide) Modifier.weight(1f) else Modifier
+        FilledTonalButton(
+            onClick = vm::playSelection,
+            enabled = lineEnabled,
+            contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
+        ) {
+            Icon(Icons.Filled.PlayArrow, null, Modifier.size(20.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.play_line))
+        }
+        BarIcon(Icons.Filled.FastRewind, R.string.play_before, lineEnabled, vm::playBeforeStart)
+        BarIcon(Icons.Filled.FastForward, R.string.play_after, lineEnabled, vm::playAfterEnd)
+        BarIcon(
+            if (playback.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            R.string.play_pause, audioReady, vm::togglePlay,
+        )
+        BarIcon(Icons.Filled.Stop, R.string.play_stop, playback.playing, vm::stopPlayback)
+        Text(
+            TimeFormat.display(if (playback.playing) playback.positionMs else playback.cursorMs),
+            modifier = Modifier.padding(horizontal = 8.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = FontFamily.Monospace,
+        )
+        FilterChip(
+            selected = snapEnabled,
+            onClick = { vm.setSnapEnabled(!snapEnabled) },
+            label = { Text(stringResource(R.string.snap)) },
+            leadingIcon = if (snapEnabled) {
+                { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+            } else null,
+        )
+        VerticalDivider(Modifier.padding(horizontal = 8.dp).size(width = 1.dp, height = 24.dp))
+        LabeledSlider(Icons.AutoMirrored.Filled.VolumeUp, R.string.volume, volume, vm::setVolume, sliderModifier, sliderWidth)
+        LabeledSlider(
+            Icons.Filled.Height, R.string.amplitude,
+            value = logPosition(viewport.amplitude.toDouble(), EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()),
+            onChange = {
+                vm.setAmplitude(fromLogPosition(it, EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()).toFloat())
+            },
+            modifier = sliderModifier,
+            sliderWidth = sliderWidth,
+        )
+        // Right = zoom in (fewer ms per pixel).
+        LabeledSlider(
+            Icons.Filled.ZoomIn, R.string.zoom,
+            value = 1f - logPosition(viewport.msPerPx, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX),
+            onChange = { vm.setZoom(fromLogPosition(1f - it, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX)) },
+            modifier = sliderModifier,
+            sliderWidth = sliderWidth,
+        )
+    }
+    }
+}
+
+private fun logPosition(value: Double, min: Double, max: Double): Float =
+    (ln(value / min) / ln(max / min)).toFloat().coerceIn(0f, 1f)
+
+private fun fromLogPosition(pos: Float, min: Double, max: Double): Double =
+    min * (max / min).pow(pos.toDouble())
+
+@Composable
+private fun LabeledSlider(
+    icon: ImageVector,
+    label: Int,
+    value: Float,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    sliderWidth: Dp? = 128.dp,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.padding(end = 12.dp)) {
+        Icon(
+            icon,
+            contentDescription = stringResource(label),
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            modifier = (if (sliderWidth != null) Modifier.width(sliderWidth) else Modifier.weight(1f)).padding(start = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun LineEditor(
+    line: SubtitleLine?,
+    onStart: (Long, Long) -> Unit,
+    onEnd: (Long, Long) -> Unit,
+    onSetStartAtCursor: () -> Unit,
+    onSetEndAtCursor: () -> Unit,
+    onText: (Long, String) -> Unit,
+    onCaret: (Int) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    if (line == null) {
+        Text(
+            stringResource(R.string.no_selection),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+
+    var tfv by remember(line.id) { mutableStateOf(TextFieldValue(line.text, TextRange(line.text.length))) }
+    // Sync external changes (undo/redo, split, merge) into the field.
+    LaunchedEffect(line.id, line.text) {
+        if (tfv.text != line.text) tfv = TextFieldValue(line.text, TextRange(line.text.length))
+    }
+
+    val times = @Composable {
+        TimeField(
+            label = stringResource(R.string.field_start),
+            valueMs = line.startMs,
+            onCommit = { onStart(line.id, it) },
+            onUseCursor = onSetStartAtCursor,
+            useCursorLabel = stringResource(R.string.set_start_at_cursor),
+        )
+        TimeField(
+            label = stringResource(R.string.field_end_with_duration, "%.3f".format(line.durationMs / 1000.0)),
+            valueMs = line.endMs,
+            onCommit = { onEnd(line.id, it) },
+            onUseCursor = onSetEndAtCursor,
+            useCursorLabel = stringResource(R.string.set_end_at_cursor),
+        )
+    }
+    val text = @Composable { modifier: Modifier ->
+        OutlinedTextField(
+            value = tfv,
+            onValueChange = {
+                tfv = it
+                onCaret(it.selection.start)
+                if (it.text != line.text) onText(line.id, it.text)
+            },
+            label = { Text(stringResource(R.string.field_text)) },
+            minLines = 1,
+            maxLines = 3,
+            modifier = modifier,
+        )
+    }
+    val nav = @Composable {
+        Column {
+            IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.line_previous))
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.line_next))
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        if (maxWidth >= 600.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                times()
+                text(Modifier.weight(1f))
+                nav()
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    times()
+                    nav()
+                }
+                text(Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimeField(
+    label: String,
+    valueMs: Long,
+    onCommit: (Long) -> Unit,
+    onUseCursor: () -> Unit,
+    useCursorLabel: String,
+) {
+    val focusManager = LocalFocusManager.current
+    var text by remember(valueMs) { mutableStateOf(TimeFormat.display(valueMs)) }
+    var focused by remember { mutableStateOf(false) }
+    fun commit() {
+        val parsed = TimeFormat.parse(text)
+        if (parsed != null && parsed != valueMs) onCommit(parsed) else text = TimeFormat.display(valueMs)
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        label = { Text(label, maxLines = 1) },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { commit(); focusManager.clearFocus() }),
+        trailingIcon = {
+            IconButton(onClick = onUseCursor) {
+                Icon(Icons.Filled.MyLocation, useCursorLabel, Modifier.size(20.dp))
+            }
+        },
+        modifier = Modifier
+            .width(168.dp)
+            .onFocusChanged {
+                if (focused && !it.isFocused) commit()
+                focused = it.isFocused
+            },
+    )
+}
+
+@Composable
+private fun SubtitleList(
+    lines: List<SubtitleLine>,
+    selectedId: Long?,
+    checkedIds: Set<Long>,
+    loading: Boolean,
+    onClick: (Long) -> Unit,
+    onLongClick: (Long) -> Unit,
+    modifier: Modifier,
+) {
+    val haptics = LocalHapticFeedback.current
+    val state = rememberLazyListState()
+    val selectedIndex = lines.indexOfFirst { it.id == selectedId }
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex < 0) return@LaunchedEffect
+        val visible = state.layoutInfo.visibleItemsInfo
+        val first = visible.firstOrNull()?.index ?: 0
+        val last = visible.lastOrNull()?.index ?: 0
+        if (selectedIndex <= first || selectedIndex >= last) state.animateScrollToItem(max(0, selectedIndex - 1))
+    }
+    Box(modifier) {
+        when {
+            loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            lines.isEmpty() -> Text(
+                stringResource(R.string.subtitles_empty),
+                modifier = Modifier.align(Alignment.Center),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            else -> LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
+                itemsIndexed(lines, key = { _, l -> l.id }) { i, line ->
+                    SubtitleRow(
+                        number = i + 1,
+                        line = line,
+                        selected = line.id == selectedId,
+                        checked = if (checkedIds.isEmpty()) null else line.id in checkedIds,
+                        onClick = { onClick(line.id) },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick(line.id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubtitleRow(
+    number: Int,
+    line: SubtitleLine,
+    selected: Boolean,
+    /** null outside multi-select mode. */
+    checked: Boolean?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    val invalid = line.durationMs <= 0
+    val background = when {
+        checked == true -> cs.primaryContainer
+        selected -> cs.secondaryContainer
+        else -> cs.surface
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(background)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 12.dp, vertical = if (checked != null) 0.dp else 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (checked != null) {
+            Checkbox(checked = checked, onCheckedChange = { onClick() })
+        }
+        Text(
+            number.toString(),
+            modifier = Modifier.width(40.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = cs.onSurfaceVariant,
+        )
+        Text(
+            "${TimeFormat.display(line.startMs)} → ${TimeFormat.display(line.endMs)}",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = if (invalid) cs.error else cs.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            line.text.replace("\n", " ⏎ "),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = when {
+                checked == true -> cs.onPrimaryContainer
+                selected -> cs.onSecondaryContainer
+                else -> cs.onSurface
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}

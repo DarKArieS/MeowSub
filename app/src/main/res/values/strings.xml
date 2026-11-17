@@ -1,0 +1,86 @@
+<resources>
+    <string name="app_name">MeowSub</string>
+
+    <!-- Common -->
+    <string name="action_back">返回</string>
+    <string name="action_refresh">重新整理</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_more">更多</string>
+
+    <!-- Browser -->
+    <string name="browser_add_folder">加入資料夾</string>
+    <string name="browser_remove_folder">移除資料夾</string>
+    <string name="browser_empty_title">還沒有資料夾</string>
+    <string name="browser_empty_body">加入一個存放音訊與 SRT 字幕的資料夾，同檔名的音訊和字幕會自動配對。</string>
+    <string name="browser_folder_empty">這個資料夾裡沒有音訊或 SRT 檔</string>
+    <string name="browser_audio_label">音訊：%1$s</string>
+    <string name="browser_subtitle_label">字幕：%1$s</string>
+    <string name="browser_no_subtitle">沒有字幕，儲存時會建立 %1$s</string>
+    <string name="browser_no_audio">沒有對應的音訊</string>
+    <string name="browser_error">無法讀取資料夾：%1$s</string>
+
+    <!-- Editor top bar -->
+    <string name="editor_new_subtitle">新字幕（尚未儲存）</string>
+    <string name="action_undo">復原</string>
+    <string name="action_redo">重做</string>
+    <string name="action_add_after">在後面新增字幕</string>
+    <string name="action_insert_before">在前面插入字幕</string>
+    <string name="action_delete">刪除字幕</string>
+    <string name="action_split">在游標處分割字幕</string>
+    <string name="action_merge">與下一句合併</string>
+    <string name="action_sort">依時間排序</string>
+    <string name="action_save">儲存</string>
+    <string name="action_copy">複製字幕</string>
+    <string name="action_copy_text">複製純文字</string>
+    <string name="action_cut">剪下字幕</string>
+    <string name="action_paste">貼上字幕（保留原時間）</string>
+    <string name="action_select_all">全選</string>
+    <string name="action_exit_selection">結束選取</string>
+    <string name="selection_count">已選取 %1$d 句</string>
+
+    <!-- Playback -->
+    <string name="play_line">播放本句</string>
+    <string name="play_before">播放起點前 0.5 秒</string>
+    <string name="play_after">播放終點後 0.5 秒</string>
+    <string name="play_pause">從游標播放／暫停</string>
+    <string name="play_stop">停止</string>
+    <string name="volume">音量</string>
+    <string name="amplitude">波形振幅</string>
+    <string name="zoom">時間解析度</string>
+    <string name="snap">吸附</string>
+    <string name="waveform_previous">上一句</string>
+    <string name="waveform_next">下一句</string>
+
+    <!-- Line editor -->
+    <string name="field_start">起點</string>
+    <string name="field_end_with_duration">終點（%1$s 秒）</string>
+    <string name="field_text">字幕文字</string>
+    <string name="set_start_at_cursor">起點設為游標位置</string>
+    <string name="set_end_at_cursor">終點設為游標位置</string>
+    <string name="line_previous">上一句</string>
+    <string name="line_next">下一句（最後一句時新增）</string>
+    <string name="no_selection">沒有選取字幕</string>
+    <string name="subtitles_empty">還沒有字幕，按 + 新增</string>
+
+    <!-- Audio -->
+    <string name="audio_loading">正在解碼音訊… %1$s</string>
+    <string name="audio_none">沒有音訊檔</string>
+    <string name="audio_failed">音訊無法載入：%1$s</string>
+
+    <!-- Unsaved dialog -->
+    <string name="unsaved_title">尚未儲存</string>
+    <string name="unsaved_body">要儲存「%1$s」的修改嗎？</string>
+    <string name="unsaved_save">儲存</string>
+    <string name="unsaved_discard">不儲存</string>
+
+    <!-- Messages -->
+    <string name="msg_saved">已儲存</string>
+    <string name="msg_save_failed">儲存失敗：%1$s</string>
+    <string name="msg_subtitle_load_failed">無法讀取字幕：%1$s</string>
+    <string name="msg_no_next_line">沒有下一句可以合併</string>
+    <string name="msg_already_sorted">已經依時間排序</string>
+    <string name="msg_no_audio">沒有可播放的音訊</string>
+    <string name="msg_clipboard_empty">剪貼簿裡沒有 SRT 字幕</string>
+    <string name="msg_pasted">已貼上 %1$s 句字幕</string>
+    <string name="msg_folder_failed">無法加入資料夾：%1$s</string>
+</resources>
