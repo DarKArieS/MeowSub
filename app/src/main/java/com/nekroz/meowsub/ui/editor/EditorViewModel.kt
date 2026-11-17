@@ -542,16 +542,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (_playback.value.playing) play(t, null) else _playback.update { it.copy(cursorMs = t) }
     }
 
+    /** Plays the selected line; when it finishes, the cursor moves to the line's end time. */
     fun playSelection() {
-        _ui.value.selected?.let { play(it.startMs, it.endMs) }
-    }
-
-    fun playBeforeStart() {
-        _ui.value.selected?.let { play(it.startMs - EDGE_PREVIEW_MS, it.startMs) }
-    }
-
-    fun playAfterEnd() {
-        _ui.value.selected?.let { play(it.endMs, it.endMs + EDGE_PREVIEW_MS) }
+        _ui.value.selected?.let { play(it.startMs, it.endMs, moveCursorOnEnd = true) }
     }
 
     /** Play from the cursor to the end, or pause and move the cursor to where playback stopped. */
@@ -572,20 +565,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         _playback.update { it.copy(playing = false) }
     }
 
-    private fun play(fromMs: Long, toMs: Long?) {
+    /**
+     * @param moveCursorOnEnd when playback reaches its end by itself (not stopped or replaced),
+     *   move the cursor to where it ended.
+     */
+    private fun play(fromMs: Long, toMs: Long?, moveCursorOnEnd: Boolean = false) {
         val p = player ?: return message(R.string.msg_no_audio)
         tickerJob?.cancel()
         val from = fromMs.coerceAtLeast(0)
         p.play(from, toMs)
         _playback.update { it.copy(playing = true, positionMs = from) }
         tickerJob = viewModelScope.launch {
+            var last = from
             while (true) {
                 delay(16)
                 val pos = p.positionMs() ?: break
+                last = pos
                 _playback.update { it.copy(positionMs = pos) }
                 followPlayback(pos)
             }
-            _playback.update { it.copy(playing = false) }
+            // Only reached on a natural end: stopPlayback()/play() cancel this job first.
+            _playback.update {
+                if (moveCursorOnEnd) {
+                    val end = toMs ?: last
+                    it.copy(playing = false, positionMs = end, cursorMs = end)
+                } else {
+                    it.copy(playing = false)
+                }
+            }
         }
     }
 
@@ -634,7 +641,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         const val MIN_AMPLITUDE = 0.5f
         const val MAX_AMPLITUDE = 20f
         const val DEFAULT_DURATION_MS = 2_000L
-        const val EDGE_PREVIEW_MS = 500L
         private const val KEY_MS_PER_PX = "msPerPx"
         private const val KEY_AMPLITUDE = "amplitude"
         private const val KEY_VOLUME = "volume"

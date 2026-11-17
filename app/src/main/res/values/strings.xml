@@ -44,9 +44,6 @@
     <string name="selection_count">已選取 %1$d 句</string>
 
     <!-- Playback -->
-    <string name="play_line">播放本句</string>
-    <string name="play_before">播放起點前 0.5 秒</string>
-    <string name="play_after">播放終點後 0.5 秒</string>
     <string name="play_pause">從游標播放／暫停</string>
     <string name="play_stop">停止</string>
     <string name="volume">音量</string>

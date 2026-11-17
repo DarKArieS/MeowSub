@@ -1,5 +1,6 @@
 package com.nekroz.meowsub.ui.editor
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -8,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -27,41 +27,22 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.CallMerge
-import androidx.compose.material.icons.automirrored.filled.CallSplit
-import androidx.compose.material.icons.automirrored.filled.Notes
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -94,10 +75,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextRange
@@ -167,7 +148,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                         vm.saveWaveformHeight(0f)
                     },
                 )
-                PlaybackBar(vm, hasSelection = ui.selected != null, audioReady = ui.audio is AudioStatus.Ready)
+                PlaybackBar(vm, audioReady = ui.audio is AudioStatus.Ready)
                 HorizontalDivider()
                 LineEditor(
                     line = ui.selected,
@@ -188,6 +169,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                     loading = ui.loading,
                     onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.select(it) },
                     onLongClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.startSelection(it) },
+                    onDoubleClick = { if (!ui.selectionMode) vm.playSelection() },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
             }
@@ -437,12 +419,11 @@ private fun StatusChip(text: String, modifier: Modifier, error: Boolean = false)
 }
 
 @Composable
-private fun PlaybackBar(vm: EditorViewModel, hasSelection: Boolean, audioReady: Boolean) {
+private fun PlaybackBar(vm: EditorViewModel, audioReady: Boolean) {
     val playback by vm.playback.collectAsStateWithLifecycle()
     val viewport by vm.viewport.collectAsStateWithLifecycle()
     val volume by vm.volume.collectAsStateWithLifecycle()
     val snapEnabled by vm.snapEnabled.collectAsStateWithLifecycle()
-    val lineEnabled = audioReady && hasSelection
     val scroll = rememberScrollState()
     // Wide screens: sliders share the leftover width. Narrow screens: fixed sliders, row scrolls.
     BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -456,17 +437,6 @@ private fun PlaybackBar(vm: EditorViewModel, hasSelection: Boolean, audioReady: 
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val sliderModifier = if (wide) Modifier.weight(1f) else Modifier
-            FilledTonalButton(
-                onClick = vm::playSelection,
-                enabled = lineEnabled,
-                contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
-            ) {
-                Icon(Icons.Filled.PlayArrow, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.play_line))
-            }
-            BarIcon(Icons.Filled.FastRewind, R.string.play_before, lineEnabled, vm::playBeforeStart)
-            BarIcon(Icons.Filled.FastForward, R.string.play_after, lineEnabled, vm::playAfterEnd)
             BarIcon(
                 if (playback.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 R.string.play_pause, audioReady, vm::togglePlay,
@@ -672,10 +642,16 @@ private fun SubtitleList(
     loading: Boolean,
     onClick: (Long) -> Unit,
     onLongClick: (Long) -> Unit,
+    /** Second tap on the same row; the first tap has already run [onClick]. */
+    onDoubleClick: (Long) -> Unit,
     modifier: Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
     val state = rememberLazyListState()
+    // Double-tap is detected by hand so a single tap selects immediately instead of waiting
+    // for the double-tap timeout (as combinedClickable's onDoubleClick would).
+    val doubleTapTimeout = LocalViewConfiguration.current.doubleTapTimeoutMillis
+    val lastTap = remember { longArrayOf(Long.MIN_VALUE, 0L) } // [line id, uptime ms]
     val selectedIndex = lines.indexOfFirst { it.id == selectedId }
     LaunchedEffect(selectedIndex) {
         if (selectedIndex < 0) return@LaunchedEffect
@@ -700,7 +676,14 @@ private fun SubtitleList(
                         line = line,
                         selected = line.id == selectedId,
                         checked = if (checkedIds.isEmpty()) null else line.id in checkedIds,
-                        onClick = { onClick(line.id) },
+                        onClick = {
+                            val now = SystemClock.uptimeMillis()
+                            val isDouble = lastTap[0] == line.id && now - lastTap[1] <= doubleTapTimeout
+                            lastTap[0] = if (isDouble) Long.MIN_VALUE else line.id
+                            lastTap[1] = now
+                            onClick(line.id)
+                            if (isDouble) onDoubleClick(line.id)
+                        },
                         onLongClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onLongClick(line.id)
