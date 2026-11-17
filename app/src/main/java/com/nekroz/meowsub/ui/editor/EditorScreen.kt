@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,8 +38,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Height
@@ -82,18 +83,23 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -135,37 +141,56 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(
+        BoxWithConstraints(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .consumeWindowInsets(padding)
                 .imePadding()
         ) {
-            WaveformPanel(vm, ui, Modifier.fillMaxWidth().weight(1f))
-            PlaybackBar(vm, hasSelection = ui.selected != null, audioReady = ui.audio is AudioStatus.Ready)
-            HorizontalDivider()
-            LineEditor(
-                line = ui.selected,
-                onStart = vm::setStart,
-                onEnd = vm::setEnd,
-                onSetStartAtCursor = vm::setStartAtCursor,
-                onSetEndAtCursor = vm::setEndAtCursor,
-                onText = vm::updateText,
-                onCaret = { caret = it },
-                onPrevious = vm::selectPrevious,
-                onNext = vm::selectNext,
-            )
-            HorizontalDivider()
-            SubtitleList(
-                lines = ui.lines,
-                selectedId = ui.selectedId,
-                checkedIds = ui.checkedIds,
-                loading = ui.loading,
-                onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.select(it) },
-                onLongClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.startSelection(it) },
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            val density = LocalDensity.current
+            // Stored height (dp); 0 = default split. Clamped to what fits, e.g. while the keyboard is up.
+            var waveHeightDp by rememberSaveable { mutableFloatStateOf(vm.savedWaveformHeightDp) }
+            val minWave = 64.dp
+            val maxWave = (maxHeight - MIN_HEIGHT_BELOW_WAVEFORM).coerceAtLeast(minWave)
+            val shownWave = (if (waveHeightDp > 0f) waveHeightDp.dp else maxHeight * 0.4f).coerceIn(minWave, maxWave)
+            Column(Modifier.fillMaxSize()) {
+                WaveformPanel(vm, ui, Modifier.fillMaxWidth().height(shownWave))
+                ResizeHandle(
+                    onDrag = { deltaPx ->
+                        val base = if (waveHeightDp > 0f) waveHeightDp.dp else shownWave
+                        waveHeightDp = (base + with(density) { deltaPx.toDp() }).coerceIn(minWave, maxWave).value
+                    },
+                    onDragStopped = { vm.saveWaveformHeight(waveHeightDp) },
+                    onReset = {
+                        waveHeightDp = 0f
+                        vm.saveWaveformHeight(0f)
+                    },
+                )
+                PlaybackBar(vm, hasSelection = ui.selected != null, audioReady = ui.audio is AudioStatus.Ready)
+                HorizontalDivider()
+                LineEditor(
+                    line = ui.selected,
+                    onStart = vm::setStart,
+                    onEnd = vm::setEnd,
+                    onSetStartAtCursor = vm::setStartAtCursor,
+                    onSetEndAtCursor = vm::setEndAtCursor,
+                    onText = vm::updateText,
+                    onCaret = { caret = it },
+                    onPrevious = vm::selectPrevious,
+                    onNext = vm::selectNext,
+                )
+                HorizontalDivider()
+                SubtitleList(
+                    lines = ui.lines,
+                    selectedId = ui.selectedId,
+                    checkedIds = ui.checkedIds,
+                    loading = ui.loading,
+                    onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.select(it) },
+                    onLongClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.startSelection(it) },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+            }
         }
     }
 
@@ -193,107 +218,141 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> Unit, vm: EditorViewModel) {
-    if (ui.selectionMode) {
-        SelectionTopBar(ui, vm)
-        return
-    }
+/** Width kept for the navigation icon, the title and the ⋮ button; the rest is for the scrolling icons. */
+private val EditorBarReserved = 264.dp
+private val SelectionBarReserved = 232.dp
+
+/** Binds every configurable toolbar action to the current editor state. */
+private fun editorActions(ui: EditorUiState, vm: EditorViewModel, onSplit: () -> Unit): Map<ToolbarAction, BarAction> {
     val hasSel = ui.selected != null
-    var menuOpen by remember { mutableStateOf(false) }
-    TopAppBar(
-        expandedHeight = 56.dp,
-        navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
-            }
-        },
-        title = {
-            Column {
-                Text(
-                    text = if (ui.dirty) "${ui.title} •" else ui.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = ui.subtitleName ?: stringResource(R.string.editor_new_subtitle),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        },
-        actions = {
-            BarIcon(Icons.AutoMirrored.Filled.Undo, R.string.action_undo, ui.canUndo, vm::undo)
-            BarIcon(Icons.AutoMirrored.Filled.Redo, R.string.action_redo, ui.canRedo, vm::redo)
-            BarIcon(Icons.Filled.Add, R.string.action_add_after, !ui.loading, vm::addLineAfter)
-            BarIcon(Icons.Outlined.Delete, R.string.action_delete, hasSel, vm::deleteSelected)
-            BarIcon(Icons.Filled.ContentCopy, R.string.action_copy, hasSel, vm::copySelection)
-            BarIcon(Icons.AutoMirrored.Filled.Notes, R.string.action_copy_text, hasSel, vm::copyPlainText)
-            BarIcon(Icons.Filled.ContentCut, R.string.action_cut, hasSel, vm::cutSelection)
-            BarIcon(Icons.Filled.ContentPaste, R.string.action_paste, !ui.loading, vm::paste)
-            BarIcon(Icons.AutoMirrored.Filled.CallSplit, R.string.action_split, hasSel, onSplit)
-            BarIcon(Icons.AutoMirrored.Filled.CallMerge, R.string.action_merge, hasSel, vm::mergeWithNext)
-            if (ui.saving) {
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                }
-            } else {
-                BarIcon(Icons.Filled.Save, R.string.action_save, ui.dirty && !ui.loading) { vm.save() }
-            }
-            Box {
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Filled.MoreVert, stringResource(R.string.action_more))
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_insert_before)) },
-                        leadingIcon = { Icon(Icons.Filled.VerticalAlignTop, null) },
-                        enabled = !ui.loading,
-                        onClick = { menuOpen = false; vm.insertLineBefore() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_sort)) },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Sort, null) },
-                        enabled = ui.lines.size > 1,
-                        onClick = { menuOpen = false; vm.sortByTime() },
-                    )
-                }
-            }
-        },
+    val ready = !ui.loading
+    fun a(action: ToolbarAction, enabled: Boolean, busy: Boolean = false, onClick: () -> Unit) =
+        action to BarAction(action.icon(), action.label(), enabled, busy, onClick)
+    return mapOf(
+        a(ToolbarAction.UNDO, ui.canUndo, onClick = vm::undo),
+        a(ToolbarAction.REDO, ui.canRedo, onClick = vm::redo),
+        a(ToolbarAction.ADD, ready, onClick = vm::addLineAfter),
+        a(ToolbarAction.INSERT_BEFORE, ready, onClick = vm::insertLineBefore),
+        a(ToolbarAction.DELETE, hasSel, onClick = vm::deleteSelected),
+        a(ToolbarAction.COPY, hasSel, onClick = vm::copySelection),
+        a(ToolbarAction.COPY_TEXT, hasSel, onClick = vm::copyPlainText),
+        a(ToolbarAction.CUT, hasSel, onClick = vm::cutSelection),
+        a(ToolbarAction.PASTE, ready, onClick = vm::paste),
+        a(ToolbarAction.SPLIT, hasSel, onClick = onSplit),
+        a(ToolbarAction.MERGE, hasSel, onClick = vm::mergeWithNext),
+        a(ToolbarAction.SORT, ui.lines.size > 1, onClick = vm::sortByTime),
+        a(ToolbarAction.SAVE, ui.dirty && ready, busy = ui.saving, onClick = { vm.save() }),
     )
 }
 
-/** Contextual app bar shown while lines are ticked in multi-select mode. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SelectionTopBar(ui: EditorUiState, vm: EditorViewModel) {
-    TopAppBar(
-        expandedHeight = 56.dp,
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            navigationIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        ),
-        navigationIcon = {
-            IconButton(onClick = vm::clearSelection) {
-                Icon(Icons.Filled.Close, stringResource(R.string.action_exit_selection))
-            }
-        },
-        title = { Text(stringResource(R.string.selection_count, ui.checkedIds.size)) },
-        actions = {
-            BarIcon(Icons.Filled.SelectAll, R.string.action_select_all, ui.checkedIds.size < ui.lines.size, vm::selectAll)
-            BarIcon(Icons.Filled.ContentCopy, R.string.action_copy, true, vm::copySelection)
-            BarIcon(Icons.AutoMirrored.Filled.Notes, R.string.action_copy_text, true, vm::copyPlainText)
-            BarIcon(Icons.Filled.ContentCut, R.string.action_cut, true, vm::cutSelection)
-            BarIcon(Icons.Filled.ContentPaste, R.string.action_paste, true, vm::paste)
-            BarIcon(Icons.Outlined.Delete, R.string.action_delete, true, vm::deleteSelected)
-        },
+private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> Unit, vm: EditorViewModel) {
+    val toolbar by vm.toolbar.collectAsStateWithLifecycle()
+    var editingToolbar by rememberSaveable { mutableStateOf(false) }
+    if (editingToolbar) {
+        ToolbarEditorDialog(
+            initial = toolbar,
+            onConfirm = { vm.setToolbar(it); editingToolbar = false },
+            onDismiss = { editingToolbar = false },
+        )
+    }
+    if (ui.selectionMode) {
+        SelectionTopBar(ui, vm, toolbar, onEditToolbar = { editingToolbar = true })
+        return
+    }
+    val bound = editorActions(ui, vm, onSplit)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val barWidth = maxWidth - EditorBarReserved
+        TopAppBar(
+            expandedHeight = 56.dp,
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
+                }
+            },
+            title = {
+                Column {
+                    Text(
+                        text = if (ui.dirty) "${ui.title} •" else ui.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = ui.subtitleName ?: stringResource(R.string.editor_new_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            },
+            actions = {
+                ScrollableActions(
+                    bar = toolbar.filter { it.onBar }.mapNotNull { bound[it.action] },
+                    menu = toolbar.filterNot { it.onBar }.mapNotNull { bound[it.action] },
+                    maxBarWidth = barWidth,
+                    onEditToolbar = { editingToolbar = true },
+                )
+            },
+        )
+    }
+}
+
+/**
+ * Contextual app bar shown while lines are ticked in multi-select mode. Uses the same
+ * arrangement as the main toolbar, limited to actions that work on several lines.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(
+    ui: EditorUiState,
+    vm: EditorViewModel,
+    toolbar: List<ToolbarItem>,
+    onEditToolbar: () -> Unit,
+) {
+    fun bind(action: ToolbarAction): BarAction {
+        val onClick: () -> Unit = when (action) {
+            ToolbarAction.COPY -> vm::copySelection
+            ToolbarAction.COPY_TEXT -> vm::copyPlainText
+            ToolbarAction.CUT -> vm::cutSelection
+            ToolbarAction.PASTE -> vm::paste
+            else -> vm::deleteSelected
+        }
+        return BarAction(action.icon(), action.label(), onClick = onClick)
+    }
+    val items = toolbar.filter { it.action.inSelectionMode }
+    val selectAll = BarAction(
+        Icons.Filled.SelectAll, R.string.action_select_all,
+        enabled = ui.checkedIds.size < ui.lines.size, onClick = vm::selectAll,
     )
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val barWidth = maxWidth - SelectionBarReserved
+        TopAppBar(
+            expandedHeight = 56.dp,
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                navigationIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ),
+            navigationIcon = {
+                IconButton(onClick = vm::clearSelection) {
+                    Icon(Icons.Filled.Close, stringResource(R.string.action_exit_selection))
+                }
+            },
+            title = { Text(stringResource(R.string.selection_count, ui.checkedIds.size), maxLines = 1) },
+            actions = {
+                ScrollableActions(
+                    bar = listOf(selectAll) + items.filter { it.onBar }.map { bind(it.action) },
+                    menu = items.filterNot { it.onBar }.map { bind(it.action) },
+                    maxBarWidth = barWidth,
+                    onEditToolbar = onEditToolbar,
+                )
+            },
+        )
+    }
 }
 
 @Composable
@@ -358,6 +417,9 @@ private fun WaveformPanel(vm: EditorViewModel, ui: EditorUiState, modifier: Modi
     }
 }
 
+/** Room kept below the waveform for the playback bar, line editor and some of the list. */
+private val MIN_HEIGHT_BELOW_WAVEFORM = 220.dp
+
 @Composable
 private fun StatusChip(text: String, modifier: Modifier, error: Boolean = false) {
     Surface(
@@ -384,66 +446,66 @@ private fun PlaybackBar(vm: EditorViewModel, hasSelection: Boolean, audioReady: 
     val scroll = rememberScrollState()
     // Wide screens: sliders share the leftover width. Narrow screens: fixed sliders, row scrolls.
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-    val wide = maxWidth >= 880.dp
-    val sliderWidth = if (wide) null else 128.dp
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .then(if (wide) Modifier else Modifier.horizontalScroll(scroll))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val sliderModifier = if (wide) Modifier.weight(1f) else Modifier
-        FilledTonalButton(
-            onClick = vm::playSelection,
-            enabled = lineEnabled,
-            contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
+        val wide = maxWidth >= 880.dp
+        val sliderWidth = if (wide) null else 128.dp
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(if (wide) Modifier else Modifier.horizontalScroll(scroll))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.PlayArrow, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(4.dp))
-            Text(stringResource(R.string.play_line))
+            val sliderModifier = if (wide) Modifier.weight(1f) else Modifier
+            FilledTonalButton(
+                onClick = vm::playSelection,
+                enabled = lineEnabled,
+                contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
+            ) {
+                Icon(Icons.Filled.PlayArrow, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.play_line))
+            }
+            BarIcon(Icons.Filled.FastRewind, R.string.play_before, lineEnabled, vm::playBeforeStart)
+            BarIcon(Icons.Filled.FastForward, R.string.play_after, lineEnabled, vm::playAfterEnd)
+            BarIcon(
+                if (playback.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                R.string.play_pause, audioReady, vm::togglePlay,
+            )
+            BarIcon(Icons.Filled.Stop, R.string.play_stop, playback.playing, vm::stopPlayback)
+            Text(
+                TimeFormat.display(if (playback.playing) playback.positionMs else playback.cursorMs),
+                modifier = Modifier.padding(horizontal = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+            FilterChip(
+                selected = snapEnabled,
+                onClick = { vm.setSnapEnabled(!snapEnabled) },
+                label = { Text(stringResource(R.string.snap)) },
+                leadingIcon = if (snapEnabled) {
+                    { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+                } else null,
+            )
+            VerticalDivider(Modifier.padding(horizontal = 8.dp).size(width = 1.dp, height = 24.dp))
+            LabeledSlider(Icons.AutoMirrored.Filled.VolumeUp, R.string.volume, volume, vm::setVolume, sliderModifier, sliderWidth)
+            LabeledSlider(
+                Icons.Filled.Height, R.string.amplitude,
+                value = logPosition(viewport.amplitude.toDouble(), EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()),
+                onChange = {
+                    vm.setAmplitude(fromLogPosition(it, EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()).toFloat())
+                },
+                modifier = sliderModifier,
+                sliderWidth = sliderWidth,
+            )
+            // Right = zoom in (fewer ms per pixel).
+            LabeledSlider(
+                Icons.Filled.ZoomIn, R.string.zoom,
+                value = 1f - logPosition(viewport.msPerPx, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX),
+                onChange = { vm.setZoom(fromLogPosition(1f - it, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX)) },
+                modifier = sliderModifier,
+                sliderWidth = sliderWidth,
+            )
         }
-        BarIcon(Icons.Filled.FastRewind, R.string.play_before, lineEnabled, vm::playBeforeStart)
-        BarIcon(Icons.Filled.FastForward, R.string.play_after, lineEnabled, vm::playAfterEnd)
-        BarIcon(
-            if (playback.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            R.string.play_pause, audioReady, vm::togglePlay,
-        )
-        BarIcon(Icons.Filled.Stop, R.string.play_stop, playback.playing, vm::stopPlayback)
-        Text(
-            TimeFormat.display(if (playback.playing) playback.positionMs else playback.cursorMs),
-            modifier = Modifier.padding(horizontal = 8.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace,
-        )
-        FilterChip(
-            selected = snapEnabled,
-            onClick = { vm.setSnapEnabled(!snapEnabled) },
-            label = { Text(stringResource(R.string.snap)) },
-            leadingIcon = if (snapEnabled) {
-                { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
-            } else null,
-        )
-        VerticalDivider(Modifier.padding(horizontal = 8.dp).size(width = 1.dp, height = 24.dp))
-        LabeledSlider(Icons.AutoMirrored.Filled.VolumeUp, R.string.volume, volume, vm::setVolume, sliderModifier, sliderWidth)
-        LabeledSlider(
-            Icons.Filled.Height, R.string.amplitude,
-            value = logPosition(viewport.amplitude.toDouble(), EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()),
-            onChange = {
-                vm.setAmplitude(fromLogPosition(it, EditorViewModel.MIN_AMPLITUDE.toDouble(), EditorViewModel.MAX_AMPLITUDE.toDouble()).toFloat())
-            },
-            modifier = sliderModifier,
-            sliderWidth = sliderWidth,
-        )
-        // Right = zoom in (fewer ms per pixel).
-        LabeledSlider(
-            Icons.Filled.ZoomIn, R.string.zoom,
-            value = 1f - logPosition(viewport.msPerPx, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX),
-            onChange = { vm.setZoom(fromLogPosition(1f - it, EditorViewModel.MIN_MS_PER_PX, EditorViewModel.MAX_MS_PER_PX)) },
-            modifier = sliderModifier,
-            sliderWidth = sliderWidth,
-        )
-    }
     }
 }
 

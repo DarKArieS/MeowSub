@@ -6,6 +6,11 @@
     <string name="action_refresh">重新整理</string>
     <string name="action_cancel">取消</string>
     <string name="action_more">更多</string>
+    <string name="action_ok">確定</string>
+    <string name="toolbar_edit">編輯功能列</string>
+    <string name="toolbar_edit_hint">長按拖曳調整順序；開啟＝顯示在功能列，關閉＝收進右上角「更多」選單。</string>
+    <string name="toolbar_on_bar">顯示在功能列</string>
+    <string name="toolbar_reset">恢復預設</string>
 
     <!-- Browser -->
     <string name="browser_add_folder">加入資料夾</string>
@@ -50,6 +55,7 @@
     <string name="snap">吸附</string>
     <string name="waveform_previous">上一句</string>
     <string name="waveform_next">下一句</string>
+    <string name="waveform_resize">拖動調整波形高度，點兩下恢復預設</string>
 
     <!-- Line editor -->
     <string name="field_start">起點</string>

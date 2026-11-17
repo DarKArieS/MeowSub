@@ -66,6 +66,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _snapEnabled = MutableStateFlow(prefs.getBoolean(KEY_SNAP, true))
     val snapEnabled: StateFlow<Boolean> = _snapEnabled.asStateFlow()
 
+    private val _toolbar = MutableStateFlow(ToolbarConfig.decode(prefs.getString(KEY_TOOLBAR, null)))
+    /** User-arranged toolbar: order, and which actions sit on the bar vs. in the ⋮ menu. */
+    val toolbar: StateFlow<List<ToolbarItem>> = _toolbar.asStateFlow()
+
     /** Boundary the dragged marker is currently snapped to, for drawing a guide. */
     private val _snapGuide = MutableStateFlow<Long?>(null)
     val snapGuide: StateFlow<Long?> = _snapGuide.asStateFlow()
@@ -286,6 +290,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         dragKey = null
         _snapGuide.value = null
         history.breakCoalescing()
+    }
+
+    fun setToolbar(items: List<ToolbarItem>) {
+        _toolbar.value = items
+        prefs.edit { putString(KEY_TOOLBAR, ToolbarConfig.encode(items)) }
     }
 
     fun setSnapEnabled(enabled: Boolean) {
@@ -594,6 +603,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         player?.volume = vol
     }
 
+    /** Saved waveform panel height in dp; 0 means "not set", i.e. use the default split. */
+    val savedWaveformHeightDp: Float get() = prefs.getFloat(KEY_WAVE_HEIGHT, 0f)
+
+    fun saveWaveformHeight(dp: Float) {
+        prefs.edit { putFloat(KEY_WAVE_HEIGHT, dp) }
+    }
+
     // endregion
 
     private fun message(res: Int, arg: String? = null) {
@@ -623,5 +639,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_AMPLITUDE = "amplitude"
         private const val KEY_VOLUME = "volume"
         private const val KEY_SNAP = "snap"
+        private const val KEY_WAVE_HEIGHT = "waveformHeightDp"
+        private const val KEY_TOOLBAR = "toolbar"
     }
 }
