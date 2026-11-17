@@ -51,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
@@ -89,6 +90,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nekroz.meowsub.R
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
@@ -562,9 +564,9 @@ private fun LineEditor(
                 if (it.text != line.text) onText(line.id, it.text)
             },
             label = { Text(stringResource(R.string.field_text)) },
-            minLines = 1,
-            maxLines = 3,
-            modifier = modifier,
+            // One line tall, but still multi-line: Enter adds a line break and the text scrolls
+            // vertically. (maxLines = 1 would make Compose treat it as single-line and drop Enter.)
+            modifier = modifier.height(oneLineOutlinedFieldHeight()),
         )
     }
     val nav = @Composable {
@@ -594,6 +596,21 @@ private fun LineEditor(
                 text(Modifier.fillMaxWidth())
             }
         }
+    }
+}
+
+/**
+ * Height of a one-line [OutlinedTextField] with a label: one line of body text plus the field's
+ * 16dp vertical padding, plus the half label height the outline is pushed down by (the same
+ * calculation Material 3 uses). Follows the user's font scale.
+ */
+@Composable
+private fun oneLineOutlinedFieldHeight(): Dp {
+    val typography = MaterialTheme.typography
+    return with(LocalDensity.current) {
+        val line = typography.bodyLarge.lineHeight.takeIf { it.isSp } ?: 24.sp
+        val label = typography.bodySmall.lineHeight.takeIf { it.isSp } ?: 16.sp
+        maxOf(line.toDp() + 32.dp, OutlinedTextFieldDefaults.MinHeight) + label.toDp() / 2
     }
 }
 
