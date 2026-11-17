@@ -59,17 +59,33 @@ internal class PeaksBuilder(private val sampleRate: Int, estimatedMs: Int) {
 
     private fun boundaryOf(ms: Int): Long = (ms.toLong() * sampleRate + 999) / 1000
 
-    fun add(sample: Int) {
-        if (sampleIndex >= nextBoundary) {
-            flush()
-            bucket++
-            nextBoundary = boundaryOf(bucket + 1)
+    /** Adds the first [count] samples of [samples]. */
+    fun addAll(samples: ShortArray, count: Int) {
+        var i = 0
+        while (i < count) {
+            if (sampleIndex >= nextBoundary) {
+                flush()
+                bucket++
+                nextBoundary = boundaryOf(bucket + 1)
+            }
+            // The samples left in this millisecond, scanned in a tight loop on locals.
+            val n = minOf((count - i).toLong(), (nextBoundary - sampleIndex).coerceAtLeast(1)).toInt()
+            var lo = curMin
+            var hi = curMax
+            var sum = sumAbs
+            for (k in i until i + n) {
+                val s = samples[k].toInt()
+                if (s < lo) lo = s
+                if (s > hi) hi = s
+                sum += if (s < 0) -s else s
+            }
+            curMin = lo
+            curMax = hi
+            sumAbs = sum
+            this.count += n
+            sampleIndex += n
+            i += n
         }
-        if (sample < curMin) curMin = sample
-        if (sample > curMax) curMax = sample
-        sumAbs += if (sample < 0) -sample else sample
-        count++
-        sampleIndex++
     }
 
     private fun flush() {
