@@ -90,7 +90,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestFor(pair: MediaPair): EditorRequest? {
         val cur = _ui.value.current ?: return null
-        return EditorRequest(cur.treeUri, cur.documentId, pair.baseName, pair.audio, pair.subtitle)
+        return EditorRequest(cur.treeUri, cur.documentId, pair.baseName, pair.audio, pair.subtitle, pair.original)
     }
 
     private fun navigate(path: List<PathNode>) {

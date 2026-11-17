@@ -1,11 +1,18 @@
 package com.nekroz.meowsub.data.subtitle
 
-/** One subtitle entry. Times are in milliseconds. [id] is a stable in-memory key, not the SRT index. */
+/**
+ * One subtitle entry. Times are in milliseconds. [id] is a stable in-memory key, not the SRT index.
+ *
+ * [text] is the text of the opened `<name>.srt` (the translation when a `rawSRT/<name>.srt`
+ * original exists). [original] is that original's text; it is unused (empty) without one.
+ * Both files share the same timing.
+ */
 data class SubtitleLine(
     val id: Long,
     val startMs: Long,
     val endMs: Long,
     val text: String,
+    val original: String = "",
 ) {
     val durationMs: Long get() = endMs - startMs
 

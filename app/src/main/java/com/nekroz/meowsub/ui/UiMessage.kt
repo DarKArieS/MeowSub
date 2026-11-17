@@ -2,5 +2,5 @@ package com.nekroz.meowsub.ui
 
 import androidx.annotation.StringRes
 
-/** A one-shot message for the snackbar; [arg] fills a single `%1$s` placeholder when present. */
-data class UiMessage(@param:StringRes val res: Int, val arg: String? = null)
+/** A one-shot message for the snackbar; [args] fill the string's `%1$s`, `%2$s`… placeholders. */
+class UiMessage(@param:StringRes val res: Int, vararg val args: String)

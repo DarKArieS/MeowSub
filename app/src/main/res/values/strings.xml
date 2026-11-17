@@ -20,6 +20,8 @@
     <string name="browser_folder_empty">這個資料夾裡沒有音訊或 SRT 檔</string>
     <string name="browser_audio_label">音訊：%1$s</string>
     <string name="browser_subtitle_label">字幕：%1$s</string>
+    <string name="browser_translation_label">譯文：%1$s</string>
+    <string name="browser_original_label">原文：rawSRT/%1$s</string>
     <string name="browser_no_subtitle">沒有字幕，儲存時會建立 %1$s</string>
     <string name="browser_no_audio">沒有對應的音訊</string>
     <string name="browser_error">無法讀取資料夾：%1$s</string>
@@ -86,4 +88,10 @@
     <string name="msg_clipboard_empty">剪貼簿裡沒有 SRT 字幕</string>
     <string name="msg_pasted">已貼上 %1$s 句字幕</string>
     <string name="msg_folder_failed">無法加入資料夾：%1$s</string>
+    <string name="track_translation">譯文</string>
+    <string name="track_original">原文</string>
+    <string name="original_file_name">rawSRT/%1$s</string>
+    <string name="other_file_unsaved">（另一個檔案未儲存）</string>
+    <string name="msg_aligned">已依原文時間對齊譯文：校正 %1$s 句時間，補上 %2$s 句空白譯文</string>
+    <string name="msg_original_empty">rawSRT 的原文沒有字幕，只編輯譯文</string>
 </resources>

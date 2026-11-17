@@ -14,12 +14,19 @@ import com.nekroz.meowsub.data.audio.PcmPlayer
 import com.nekroz.meowsub.data.files.DocEntry
 import com.nekroz.meowsub.data.files.DocumentIO
 import com.nekroz.meowsub.data.files.FolderRepository
+import com.nekroz.meowsub.data.subtitle.Bilingual
+import com.nekroz.meowsub.data.subtitle.Cue
 import com.nekroz.meowsub.data.subtitle.SrtFormat
 import com.nekroz.meowsub.data.subtitle.SubtitleClipboard
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
 import com.nekroz.meowsub.data.subtitle.freeEndAfter
 import com.nekroz.meowsub.data.subtitle.freeStartBefore
 import com.nekroz.meowsub.data.subtitle.TextDecoding
+import com.nekroz.meowsub.data.subtitle.Track
+import com.nekroz.meowsub.data.subtitle.cues
+import com.nekroz.meowsub.data.subtitle.forTrack
+import com.nekroz.meowsub.data.subtitle.textOf
+import com.nekroz.meowsub.data.subtitle.withText
 import com.nekroz.meowsub.ui.UiMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -79,7 +86,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private var request: EditorRequest? = null
     private var subtitleUri: Uri? = null
-    private var savedLines: List<SubtitleLine> = emptyList()
+    private var originalUri: Uri? = null
+    /** What each file holds on disk, to tell which ones have unsaved changes. */
+    private var savedTranslation: List<Cue> = emptyList()
+    private var savedOriginal: List<Cue> = emptyList()
     private val history = EditHistory()
     private val ids = AtomicLong(1)
     private var dragKey: String? = null
@@ -96,29 +106,64 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         closeInternal()
         request = req
         subtitleUri = req.subtitle?.uri
-        savedLines = emptyList()
+        originalUri = req.original?.uri
+        savedTranslation = emptyList()
+        savedOriginal = emptyList()
         _ui.value = EditorUiState(
             isOpen = true,
             title = req.baseName,
             subtitleName = req.subtitle?.name,
-            loading = req.subtitle != null,
+            originalName = req.original?.name,
+            track = if (req.original != null) savedTrack() else Track.TRANSLATION,
+            loading = req.subtitle != null || req.original != null,
             audio = if (req.audio != null) AudioStatus.Loading(0f) else AudioStatus.None,
         )
         _viewport.update { it.copy(startMs = 0.0) }
         _playback.value = PlaybackState()
 
-        req.subtitle?.let { sub -> loadJobs += viewModelScope.launch { loadSubtitle(sub) } }
+        if (req.subtitle != null || req.original != null) {
+            loadJobs += viewModelScope.launch { loadSubtitles(req) }
+        }
         req.audio?.let { a -> loadJobs += viewModelScope.launch { loadAudio(a) } }
     }
 
-    private suspend fun loadSubtitle(sub: DocEntry) {
+    private suspend fun readLines(entry: DocEntry): List<SubtitleLine> {
+        val bytes = docs.readBytes(entry.uri)
+        return withContext(Dispatchers.Default) {
+            SrtFormat.parse(TextDecoding.decode(bytes)) { ids.getAndIncrement() }
+        }
+    }
+
+    /**
+     * Loads `<name>.srt` and, when present, its `rawSRT/` original. With an original, the
+     * translation is aligned to the original's timing (see [Bilingual.align]).
+     */
+    private suspend fun loadSubtitles(req: EditorRequest) {
         try {
-            val bytes = docs.readBytes(sub.uri)
-            val lines = withContext(Dispatchers.Default) {
-                SrtFormat.parse(TextDecoding.decode(bytes)) { ids.getAndIncrement() }
+            val translation = req.subtitle?.let { readLines(it) }
+            var original = req.original?.let { readLines(it) }
+            if (original != null && original.isEmpty()) {
+                // Nothing to align to (or unreadable): edit the translation alone rather than
+                // risk overwriting the original with blank entries.
+                original = null
+                originalUri = null
+                _ui.update { it.copy(originalName = null, track = Track.TRANSLATION) }
+                message(R.string.msg_original_empty)
             }
-            savedLines = lines
-            _ui.update { it.copy(lines = lines, selectedId = lines.firstOrNull()?.id, loading = false, dirty = false) }
+            val lines = if (original == null) {
+                translation.orEmpty().also { savedTranslation = it.cues(Track.TRANSLATION) }
+            } else {
+                val aligned = withContext(Dispatchers.Default) { Bilingual.align(original, translation.orEmpty()) }
+                // Parsed files keep their text in `text`, hence the TRANSLATION projection.
+                savedOriginal = original.cues(Track.TRANSLATION)
+                savedTranslation = translation?.cues(Track.TRANSLATION) ?: aligned.lines.cues(Track.TRANSLATION)
+                if (translation != null && (aligned.retimed > 0 || aligned.filled > 0)) {
+                    message(R.string.msg_aligned, aligned.retimed.toString(), aligned.filled.toString())
+                }
+                aligned.lines
+            }
+            _ui.update { it.copy(lines = lines, selectedId = lines.firstOrNull()?.id, loading = false) }
+            refreshDirty()
             lines.firstOrNull()?.let { ensureVisible(it) }
         } catch (e: CancellationException) {
             throw e
@@ -149,6 +194,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = EditorUiState()
     }
 
+    /** Switches which file's text is shown and edited. Timing is shared, so nothing else changes. */
+    fun setTrack(track: Track) {
+        if (!_ui.value.bilingual || _ui.value.track == track) return
+        history.breakCoalescing()
+        _ui.update { it.copy(track = track) }
+        prefs.edit { putString(KEY_TRACK, track.name) }
+    }
+
+    private fun savedTrack(): Track =
+        Track.entries.firstOrNull { it.name == prefs.getString(KEY_TRACK, null) } ?: Track.TRANSLATION
+
+    private fun dirtyFlags(lines: List<SubtitleLine>, bilingual: Boolean): Pair<Boolean, Boolean> =
+        (lines.cues(Track.TRANSLATION) != savedTranslation) to
+            (bilingual && lines.cues(Track.ORIGINAL) != savedOriginal)
+
+    private fun refreshDirty() {
+        _ui.update {
+            val (translation, original) = dirtyFlags(it.lines, it.bilingual)
+            it.copy(dirtyTranslation = translation, dirtyOriginal = original)
+        }
+    }
+
     private fun closeInternal() {
         loadJobs.forEach { it.cancel() }
         loadJobs.clear()
@@ -161,32 +228,51 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         persistViewPrefs()
     }
 
-    /** Writes the subtitles back as UTF-8, creating `<base>.srt` in the folder when needed. */
+    /**
+     * Writes every changed file back as UTF-8: `<base>.srt` (created in the folder when needed)
+     * and, when bilingual, the `rawSRT/` original.
+     */
     fun save(closeAfter: Boolean = false) {
         val req = request ?: return
         val state = _ui.value
         if (state.saving || state.loading) return
+        if (!state.dirty) {
+            if (closeAfter) close()
+            return
+        }
         val lines = state.lines
         _ui.update { it.copy(saving = true) }
         viewModelScope.launch {
             try {
-                val uri = subtitleUri ?: folders.createFile(req.treeUri, req.parentDocumentId, "${req.baseName}.srt")
-                    .also { created ->
-                        subtitleUri = created
-                        _ui.update { it.copy(subtitleName = "${req.baseName}.srt") }
-                    }
-                val bytes = withContext(Dispatchers.Default) { SrtFormat.serialize(lines).toByteArray(Charsets.UTF_8) }
-                docs.writeBytes(uri, bytes)
-                savedLines = lines
-                _ui.update { it.copy(saving = false, dirty = it.lines !== lines) }
+                if (state.dirtyTranslation) {
+                    val uri = subtitleUri ?: folders.createFile(req.treeUri, req.parentDocumentId, "${req.baseName}.srt")
+                        .also { created ->
+                            subtitleUri = created
+                            _ui.update { it.copy(subtitleName = "${req.baseName}.srt") }
+                        }
+                    write(uri, lines.forTrack(Track.TRANSLATION))
+                    savedTranslation = lines.cues(Track.TRANSLATION)
+                }
+                if (state.dirtyOriginal) {
+                    write(checkNotNull(originalUri), lines.forTrack(Track.ORIGINAL))
+                    savedOriginal = lines.cues(Track.ORIGINAL)
+                }
+                _ui.update { it.copy(saving = false) }
+                refreshDirty()
                 if (closeAfter && request === req) close() else message(R.string.msg_saved)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _ui.update { it.copy(saving = false) }
+                refreshDirty()
                 message(R.string.msg_save_failed, e.message ?: e.javaClass.simpleName)
             }
         }
+    }
+
+    private suspend fun write(uri: Uri, lines: List<SubtitleLine>) {
+        val bytes = withContext(Dispatchers.Default) { SrtFormat.serialize(lines).toByteArray(Charsets.UTF_8) }
+        docs.writeBytes(uri, bytes)
     }
 
     // endregion
@@ -203,11 +289,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun apply(lines: List<SubtitleLine>, selectedId: Long?) {
         _ui.update {
             val ids = if (it.checkedIds.isEmpty()) emptySet() else lines.mapTo(HashSet()) { l -> l.id }
+            val (dirtyTranslation, dirtyOriginal) = dirtyFlags(lines, it.bilingual)
             it.copy(
                 lines = lines,
                 selectedId = selectedId,
                 checkedIds = it.checkedIds.filterTo(HashSet()) { id -> id in ids },
-                dirty = lines !== savedLines,
+                dirtyTranslation = dirtyTranslation,
+                dirtyOriginal = dirtyOriginal,
                 canUndo = history.canUndo,
                 canRedo = history.canRedo,
             )
@@ -237,9 +325,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         s.lines.getOrNull(s.selectedIndex - 1)?.let { select(it.id) }
     }
 
+    /** Sets the text of the file being edited ([EditorUiState.track]). */
     fun updateText(id: Long, text: String) {
+        val track = _ui.value.track
         val line = _ui.value.lines.firstOrNull { it.id == id } ?: return
-        if (line.text != text) replace(line.copy(text = text), coalesceKey = "text:$id")
+        if (line.textOf(track) != text) replace(line.withText(track, text), coalesceKey = "text:$track:$id")
     }
 
     fun setStart(id: Long, ms: Long) {
@@ -362,8 +452,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(checkedIds = emptySet()) }
     }
 
+    /** Target lines as the file being edited sees them (its text, shared timing). */
+    private fun targetsForClipboard(): List<SubtitleLine> = _ui.value.let { it.targetLines.forTrack(it.track) }
+
     fun copySelection() {
-        val lines = _ui.value.targetLines
+        val lines = targetsForClipboard()
         if (lines.isEmpty()) return
         clipboard.copy(lines)
         // Android 13+ shows its own "copied" confirmation, so no snackbar here.
@@ -371,13 +464,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Copies just the subtitle text of the ticked lines (or the active line). */
     fun copyPlainText() {
-        val lines = _ui.value.targetLines
+        val lines = targetsForClipboard()
         if (lines.isEmpty()) return
         clipboard.copyPlainText(lines)
     }
 
     fun cutSelection() {
-        val lines = _ui.value.targetLines
+        val lines = targetsForClipboard()
         if (lines.isEmpty()) return
         clipboard.copy(lines)
         deleteSelected()
@@ -386,9 +479,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Pastes SRT text from the clipboard, keeping each line's original times. Every pasted
      * line is inserted at its place in time order (after existing lines with the same start).
+     * The text goes into the file being edited; the other file gets empty lines at those times.
      */
     fun paste() {
+        val track = _ui.value.track
         val pasted = clipboard.read { ids.getAndIncrement() }
+            .map { if (track == Track.TRANSLATION) it else it.copy(text = "", original = it.text) }
         if (pasted.isEmpty()) return message(R.string.msg_clipboard_empty)
         val lines = _ui.value.lines.toMutableList()
         for (line in pasted) {
@@ -405,23 +501,26 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // endregion
 
     /**
-     * Splits the selected line in two. The text is split at [caret]; the time at the play
-     * cursor when it lies inside the line, else proportionally to the caret, else in the middle.
+     * Splits the selected line in two. The edited file's text is split at [caret]; the time at
+     * the play cursor when it lies inside the line, else proportionally to the caret, else in the
+     * middle. When bilingual, the other file's text stays with the first half.
      */
     fun splitSelected(caret: Int) {
         val s = _ui.value
         val sel = s.selected ?: return
         val index = s.selectedIndex
         val cursor = currentTimeMs()
-        val textLen = sel.text.length
+        val text = sel.textOf(s.track)
+        val textLen = text.length
         val splitMs = when {
             cursor > sel.startMs && cursor < sel.endMs -> cursor
             caret in 1 until textLen -> sel.startMs + (sel.durationMs * caret.toDouble() / textLen).roundToLong()
             else -> sel.startMs + sel.durationMs / 2
         }
         val c = caret.coerceIn(0, textLen)
-        val first = sel.copy(endMs = splitMs, text = sel.text.substring(0, c).trimEnd())
-        val second = SubtitleLine(ids.getAndIncrement(), splitMs, sel.endMs, sel.text.substring(c).trimStart())
+        val first = sel.copy(endMs = splitMs).withText(s.track, text.substring(0, c).trimEnd())
+        val second = SubtitleLine(ids.getAndIncrement(), splitMs, sel.endMs, "")
+            .withText(s.track, text.substring(c).trimStart())
         val lines = s.lines.toMutableList().apply {
             set(index, first)
             add(index + 1, second)
@@ -434,10 +533,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val sel = s.selected ?: return
         val index = s.selectedIndex
         val next = s.lines.getOrNull(index + 1) ?: return message(R.string.msg_no_next_line)
+        fun join(a: String, b: String) = listOf(a, b).filter { it.isNotBlank() }.joinToString("\n")
         val merged = sel.copy(
             startMs = min(sel.startMs, next.startMs),
             endMs = max(sel.endMs, next.endMs),
-            text = listOf(sel.text, next.text).filter { it.isNotBlank() }.joinToString("\n"),
+            text = join(sel.text, next.text),
+            original = join(sel.original, next.original),
         )
         val lines = s.lines.toMutableList().apply {
             set(index, merged)
@@ -627,8 +728,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // endregion
 
-    private fun message(res: Int, arg: String? = null) {
-        _messages.trySend(UiMessage(res, arg))
+    private fun message(res: Int, vararg args: String) {
+        _messages.trySend(UiMessage(res, *args))
     }
 
     private fun persistViewPrefs() {
@@ -655,5 +756,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_SNAP = "snap"
         private const val KEY_WAVE_HEIGHT = "waveformHeightDp"
         private const val KEY_TOOLBAR = "toolbar"
+        private const val KEY_TRACK = "track"
     }
 }

@@ -25,8 +25,16 @@ data class DocEntry(
     val baseName: String get() = if ('.' in name) name.substringBeforeLast('.') else name
 }
 
-/** An audio file and/or SRT file sharing the same base name. */
-data class MediaPair(val baseName: String, val audio: DocEntry?, val subtitle: DocEntry?)
+/**
+ * An audio file and/or SRT file sharing the same base name. [original] is the same-named SRT in
+ * the `rawSRT` subfolder, if any: the original that [subtitle] translates.
+ */
+data class MediaPair(
+    val baseName: String,
+    val audio: DocEntry?,
+    val subtitle: DocEntry?,
+    val original: DocEntry? = null,
+)
 
 data class FolderListing(val directories: List<DocEntry>, val pairs: List<MediaPair>)
 
@@ -74,6 +82,30 @@ class FolderRepository(context: Context) {
     fun rootDocumentId(treeUri: Uri): String = DocumentsContract.getTreeDocumentId(treeUri)
 
     suspend fun list(treeUri: Uri, documentId: String): FolderListing = withContext(Dispatchers.IO) {
+        val entries = children(treeUri, documentId)
+        val dirs = entries.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+        val files = entries.filter { !it.isDirectory }
+        val audioByBase = files.filter { isAudio(it) }
+            .groupBy { it.baseName.lowercase() }
+            .mapValues { (_, list) -> list.minBy { AUDIO_EXTENSIONS.indexOf(it.extension).let { i -> if (i < 0) 99 else i } } }
+        val subtitleByBase = srtByBase(files)
+        val originalByBase = dirs.firstOrNull { it.name.equals(ORIGINALS_FOLDER, ignoreCase = true) }
+            ?.let { raw -> runCatching { srtByBase(children(treeUri, raw.documentId)) }.getOrNull() }
+            .orEmpty()
+        val pairs = (audioByBase.keys + subtitleByBase.keys).map { key ->
+            val audio = audioByBase[key]
+            val sub = subtitleByBase[key]
+            MediaPair((sub ?: audio)!!.baseName, audio, sub, originalByBase[key])
+        }.sortedBy { it.baseName.lowercase() }
+        FolderListing(dirs, pairs)
+    }
+
+    private fun srtByBase(files: List<DocEntry>): Map<String, DocEntry> =
+        files.filter { !it.isDirectory && it.extension == "srt" }
+            .groupBy { it.baseName.lowercase() }
+            .mapValues { (_, list) -> list.first() }
+
+    private fun children(treeUri: Uri, documentId: String): List<DocEntry> {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
         val entries = ArrayList<DocEntry>()
         resolver.query(
@@ -101,21 +133,7 @@ class FolderRepository(context: Context) {
                 )
             }
         } ?: throw FileNotFoundException(childrenUri.toString())
-
-        val dirs = entries.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
-        val files = entries.filter { !it.isDirectory }
-        val audioByBase = files.filter { isAudio(it) }
-            .groupBy { it.baseName.lowercase() }
-            .mapValues { (_, list) -> list.minBy { AUDIO_EXTENSIONS.indexOf(it.extension).let { i -> if (i < 0) 99 else i } } }
-        val subtitleByBase = files.filter { it.extension == "srt" }
-            .groupBy { it.baseName.lowercase() }
-            .mapValues { (_, list) -> list.first() }
-        val pairs = (audioByBase.keys + subtitleByBase.keys).map { key ->
-            val audio = audioByBase[key]
-            val sub = subtitleByBase[key]
-            MediaPair((sub ?: audio)!!.baseName, audio, sub)
-        }.sortedBy { it.baseName.lowercase() }
-        FolderListing(dirs, pairs)
+        return entries
     }
 
     /** Creates an empty file named [name] inside [parentDocumentId]; returns its document URI. */
@@ -142,6 +160,9 @@ class FolderRepository(context: Context) {
 
     companion object {
         private const val KEY_FOLDERS = "folders"
+
+        /** Subfolder holding the originals of the SRT files next to it. */
+        const val ORIGINALS_FOLDER = "rawSRT"
 
         /** Ordered by preference when several audio files share a base name. */
         val AUDIO_EXTENSIONS = listOf("wav", "flac", "m4a", "mp3", "aac", "ogg", "oga", "opus", "amr", "mka")

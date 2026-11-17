@@ -41,7 +41,7 @@ fun MeowSubApp() {
 
     LaunchedEffect(Unit) {
         merge(editorVm.messages, browserVm.messages).collect { m ->
-            val text = if (m.arg != null) resources.getString(m.res, m.arg) else resources.getString(m.res)
+            val text = if (m.args.isNotEmpty()) resources.getString(m.res, *m.args) else resources.getString(m.res)
             snackbar.showSnackbar(text)
         }
     }

@@ -53,6 +53,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -95,6 +98,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nekroz.meowsub.R
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
 import com.nekroz.meowsub.data.subtitle.TimeFormat
+import com.nekroz.meowsub.data.subtitle.Track
+import com.nekroz.meowsub.data.subtitle.textOf
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
@@ -106,7 +111,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
     var showUnsavedDialog by remember { mutableStateOf(false) }
     // Caret position in the selected line's text, used by "split".
     var caret by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(ui.selectedId) { caret = -1 }
+    LaunchedEffect(ui.selectedId, ui.track) { caret = -1 }
 
     val requestClose = { if (ui.dirty) showUnsavedDialog = true else vm.close() }
     BackHandler(onBack = requestClose)
@@ -118,7 +123,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
             EditorTopBar(
                 ui = ui,
                 onBack = requestClose,
-                onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.text?.length ?: 0) },
+                onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.textOf(ui.track)?.length ?: 0) },
                 vm = vm,
             )
         },
@@ -150,10 +155,16 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                         vm.saveWaveformHeight(0f)
                     },
                 )
-                PlaybackBar(vm, audioReady = ui.audio is AudioStatus.Ready)
+                PlaybackBar(
+                    vm,
+                    audioReady = ui.audio is AudioStatus.Ready,
+                    track = ui.track.takeIf { ui.bilingual },
+                )
                 HorizontalDivider()
                 LineEditor(
                     line = ui.selected,
+                    track = ui.track,
+                    bilingual = ui.bilingual,
                     onStart = vm::setStart,
                     onEnd = vm::setEnd,
                     onSetStartAtCursor = vm::setStartAtCursor,
@@ -166,6 +177,8 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                 HorizontalDivider()
                 SubtitleList(
                     lines = ui.lines,
+                    track = ui.track,
+                    bilingual = ui.bilingual,
                     selectedId = ui.selectedId,
                     checkedIds = ui.checkedIds,
                     loading = ui.loading,
@@ -205,6 +218,22 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
 /** Width kept for the navigation icon, the title and the ⋮ button; the rest is for the scrolling icons. */
 private val EditorBarReserved = 264.dp
 private val SelectionBarReserved = 232.dp
+
+/**
+ * Name of the file being edited. When bilingual: "譯文 · X.srt" or "原文 · rawSRT/X.srt", with a
+ * dot when the other file also has unsaved changes.
+ */
+@Composable
+private fun editedFileLabel(ui: EditorUiState): String {
+    val translationName = ui.subtitleName ?: stringResource(R.string.editor_new_subtitle)
+    if (!ui.bilingual) return translationName
+    val original = ui.track == Track.ORIGINAL
+    val name = if (original) stringResource(R.string.original_file_name, ui.originalName.orEmpty()) else translationName
+    val trackName = stringResource(if (original) R.string.track_original else R.string.track_translation)
+    val otherDirty = if (original) ui.dirtyTranslation else ui.dirtyOriginal
+    val otherHint = if (otherDirty) " " + stringResource(R.string.other_file_unsaved) else ""
+    return "$trackName · $name$otherHint"
+}
 
 /** Binds every configurable toolbar action to the current editor state. */
 private fun editorActions(ui: EditorUiState, vm: EditorViewModel, onSplit: () -> Unit): Map<ToolbarAction, BarAction> {
@@ -264,7 +293,7 @@ private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> U
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = ui.subtitleName ?: stringResource(R.string.editor_new_subtitle),
+                        text = editedFileLabel(ui),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -421,7 +450,7 @@ private fun StatusChip(text: String, modifier: Modifier, error: Boolean = false)
 }
 
 @Composable
-private fun PlaybackBar(vm: EditorViewModel, audioReady: Boolean) {
+private fun PlaybackBar(vm: EditorViewModel, audioReady: Boolean, track: Track?) {
     val playback by vm.playback.collectAsStateWithLifecycle()
     val viewport by vm.viewport.collectAsStateWithLifecycle()
     val volume by vm.volume.collectAsStateWithLifecycle()
@@ -450,6 +479,9 @@ private fun PlaybackBar(vm: EditorViewModel, audioReady: Boolean) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
             )
+            if (track != null) {
+                TrackSwitch(track, vm::setTrack, Modifier.padding(end = 8.dp))
+            }
             FilterChip(
                 selected = snapEnabled,
                 onClick = { vm.setSnapEnabled(!snapEnabled) },
@@ -477,6 +509,24 @@ private fun PlaybackBar(vm: EditorViewModel, audioReady: Boolean) {
                 modifier = sliderModifier,
                 sliderWidth = sliderWidth,
             )
+        }
+    }
+}
+
+/** 譯文 / 原文 toggle: which file's text is shown and edited. */
+@Composable
+private fun TrackSwitch(track: Track, onTrack: (Track) -> Unit, modifier: Modifier = Modifier) {
+    val tracks = listOf(Track.TRANSLATION, Track.ORIGINAL)
+    SingleChoiceSegmentedButtonRow(modifier) {
+        tracks.forEachIndexed { i, t ->
+            SegmentedButton(
+                selected = track == t,
+                onClick = { onTrack(t) },
+                shape = SegmentedButtonDefaults.itemShape(i, tracks.size),
+                icon = {},
+            ) {
+                Text(stringResource(if (t == Track.TRANSLATION) R.string.track_translation else R.string.track_original))
+            }
         }
     }
 }
@@ -514,6 +564,9 @@ private fun LabeledSlider(
 @Composable
 private fun LineEditor(
     line: SubtitleLine?,
+    /** File whose text is edited; when [bilingual], the text field is labelled with it. */
+    track: Track,
+    bilingual: Boolean,
     onStart: (Long, Long) -> Unit,
     onEnd: (Long, Long) -> Unit,
     onSetStartAtCursor: () -> Unit,
@@ -533,10 +586,14 @@ private fun LineEditor(
         return
     }
 
-    var tfv by remember(line.id) { mutableStateOf(TextFieldValue(line.text, TextRange(line.text.length))) }
+    val current = line.textOf(track)
+    var tfv by remember(line.id, track) { mutableStateOf(TextFieldValue(current, TextRange(current.length))) }
     // Sync external changes (undo/redo, split, merge) into the field.
-    LaunchedEffect(line.id, line.text) {
-        if (tfv.text != line.text) tfv = TextFieldValue(line.text, TextRange(line.text.length))
+    LaunchedEffect(line.id, track, current) {
+        if (tfv.text != current) tfv = TextFieldValue(current, TextRange(current.length))
+    }
+    val trackLabel = @Composable { t: Track ->
+        stringResource(if (t == Track.TRANSLATION) R.string.track_translation else R.string.track_original)
     }
 
     val times = @Composable {
@@ -561,9 +618,9 @@ private fun LineEditor(
             onValueChange = {
                 tfv = it
                 onCaret(it.selection.start)
-                if (it.text != line.text) onText(line.id, it.text)
+                if (it.text != current) onText(line.id, it.text)
             },
-            label = { Text(stringResource(R.string.field_text)) },
+            label = { Text(if (bilingual) trackLabel(track) else stringResource(R.string.field_text)) },
             // One line tall, but still multi-line: Enter adds a line break and the text scrolls
             // vertically. (maxLines = 1 would make Compose treat it as single-line and drop Enter.)
             modifier = modifier.height(oneLineOutlinedFieldHeight()),
@@ -654,6 +711,8 @@ private fun TimeField(
 @Composable
 private fun SubtitleList(
     lines: List<SubtitleLine>,
+    track: Track,
+    bilingual: Boolean,
     selectedId: Long?,
     checkedIds: Set<Long>,
     loading: Boolean,
@@ -691,6 +750,8 @@ private fun SubtitleList(
                     SubtitleRow(
                         number = i + 1,
                         line = line,
+                        track = track,
+                        bilingual = bilingual,
                         selected = line.id == selectedId,
                         checked = if (checkedIds.isEmpty()) null else line.id in checkedIds,
                         onClick = {
@@ -716,6 +777,9 @@ private fun SubtitleList(
 private fun SubtitleRow(
     number: Int,
     line: SubtitleLine,
+    track: Track,
+    /** Also show the other file's text, smaller, under the edited one. */
+    bilingual: Boolean,
     selected: Boolean,
     /** null outside multi-select mode. */
     checked: Boolean?,
@@ -753,17 +817,29 @@ private fun SubtitleRow(
             color = if (invalid) cs.error else cs.onSurfaceVariant,
         )
         Spacer(Modifier.width(16.dp))
-        Text(
-            line.text.replace("\n", " ⏎ "),
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = when {
-                checked == true -> cs.onPrimaryContainer
-                selected -> cs.onSecondaryContainer
-                else -> cs.onSurface
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        val textColor = when {
+            checked == true -> cs.onPrimaryContainer
+            selected -> cs.onSecondaryContainer
+            else -> cs.onSurface
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                line.textOf(track).replace("\n", " ⏎ "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val other = line.textOf(track.other)
+            if (bilingual && other.isNotBlank()) {
+                Text(
+                    other.replace("\n", " ⏎ "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }

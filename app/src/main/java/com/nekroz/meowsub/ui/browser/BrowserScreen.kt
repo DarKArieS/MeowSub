@@ -163,13 +163,21 @@ private fun FolderContent(listing: FolderListing, onDirectory: (DocEntry) -> Uni
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        val subtitleLabel = if (pair.original != null) R.string.browser_translation_label else R.string.browser_subtitle_label
                         Text(
-                            pair.subtitle?.let { stringResource(R.string.browser_subtitle_label, it.name) }
+                            pair.subtitle?.let { stringResource(subtitleLabel, it.name) }
                                 ?: stringResource(R.string.browser_no_subtitle, "${pair.baseName}.srt"),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = if (pair.subtitle == null) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        pair.original?.let { original ->
+                            Text(
+                                stringResource(R.string.browser_original_label, original.name),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 },
                 leadingContent = {
