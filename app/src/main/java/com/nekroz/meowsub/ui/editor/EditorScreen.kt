@@ -169,7 +169,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                     selectedId = ui.selectedId,
                     checkedIds = ui.checkedIds,
                     loading = ui.loading,
-                    onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.select(it) },
+                    onClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.onLineClick(it) },
                     onLongClick = { if (ui.selectionMode) vm.toggleChecked(it) else vm.startSelection(it) },
                     onDoubleClick = { if (!ui.selectionMode) vm.playSelection() },
                     modifier = Modifier.fillMaxWidth().weight(1f),

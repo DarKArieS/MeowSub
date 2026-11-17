@@ -544,37 +544,45 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Plays the selected line; when it finishes, the cursor moves to the line's end time. */
     fun playSelection() {
-        _ui.value.selected?.let { play(it.startMs, it.endMs, moveCursorOnEnd = true) }
+        _ui.value.selected?.let { play(it.startMs, it.endMs, moveCursorOnEnd = true, lineId = it.id) }
+    }
+
+    /** Tap on a list row: pauses if that line is the one playing on its own, otherwise selects it. */
+    fun onLineClick(id: Long) {
+        val p = _playback.value
+        if (p.playing && p.lineId == id) pause() else select(id)
     }
 
     /** Play from the cursor to the end, or pause and move the cursor to where playback stopped. */
     fun togglePlay() {
-        val p = _playback.value
-        if (p.playing) {
-            stopPlayback()
-            _playback.update { it.copy(cursorMs = p.positionMs) }
-        } else {
-            play(p.cursorMs, null)
-        }
+        if (_playback.value.playing) pause() else play(_playback.value.cursorMs, null)
+    }
+
+    /** Stops playback and leaves the cursor where it stopped. */
+    private fun pause() {
+        val position = _playback.value.positionMs
+        stopPlayback()
+        _playback.update { it.copy(cursorMs = position) }
     }
 
     fun stopPlayback() {
         tickerJob?.cancel()
         tickerJob = null
         player?.stop()
-        _playback.update { it.copy(playing = false) }
+        _playback.update { it.copy(playing = false, lineId = null) }
     }
 
     /**
      * @param moveCursorOnEnd when playback reaches its end by itself (not stopped or replaced),
      *   move the cursor to where it ended.
+     * @param lineId the line being played on its own, if any (see [PlaybackState.lineId]).
      */
-    private fun play(fromMs: Long, toMs: Long?, moveCursorOnEnd: Boolean = false) {
+    private fun play(fromMs: Long, toMs: Long?, moveCursorOnEnd: Boolean = false, lineId: Long? = null) {
         val p = player ?: return message(R.string.msg_no_audio)
         tickerJob?.cancel()
         val from = fromMs.coerceAtLeast(0)
         p.play(from, toMs)
-        _playback.update { it.copy(playing = true, positionMs = from) }
+        _playback.update { it.copy(playing = true, positionMs = from, lineId = lineId) }
         tickerJob = viewModelScope.launch {
             var last = from
             while (true) {
@@ -588,9 +596,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             _playback.update {
                 if (moveCursorOnEnd) {
                     val end = toMs ?: last
-                    it.copy(playing = false, positionMs = end, cursorMs = end)
+                    it.copy(playing = false, positionMs = end, cursorMs = end, lineId = null)
                 } else {
-                    it.copy(playing = false)
+                    it.copy(playing = false, lineId = null)
                 }
             }
         }

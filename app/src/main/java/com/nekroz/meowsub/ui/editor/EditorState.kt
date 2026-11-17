@@ -58,6 +58,8 @@ data class PlaybackState(
     val positionMs: Long = 0,
     /** Where playback starts from; set by tapping the waveform. */
     val cursorMs: Long = 0,
+    /** Line being played on its own (double-tap in the list); null for any other playback. */
+    val lineId: Long? = null,
 )
 
 enum class Marker { Start, End }
