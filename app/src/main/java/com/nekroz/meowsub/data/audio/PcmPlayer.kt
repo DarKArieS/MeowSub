@@ -78,6 +78,10 @@ class PcmPlayer(
 
     fun release() = stop()
 
+    private companion object {
+        const val STALL_TIMEOUT_NS = 300_000_000L
+    }
+
     private inner class Session(
         val track: AudioTrack,
         val startSample: Long,
@@ -109,20 +113,25 @@ class PcmPlayer(
                     }
                 }
                 if (!stopped) {
-                    // Let the buffered tail play out, then report completion.
+                    // Let the buffered tail play out *before* stopping the track: on some devices
+                    // stop() resets the playback head to 0 at once, so the end could then only be
+                    // detected by a timeout (~1 s late, with the playhead jumping back meanwhile).
                     val frames = written / 2
-                    track.stop()
                     var lastHead = -1L
-                    var stalled = 0
+                    var stalledSince = System.nanoTime()
                     while (!stopped) {
                         val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
                         if (head >= frames) break
-                        if (head == lastHead) {
-                            if (++stalled > 100) break
-                        } else stalled = 0
-                        lastHead = head
-                        sleep(10)
+                        val now = System.nanoTime()
+                        if (head != lastHead) {
+                            lastHead = head
+                            stalledSince = now
+                        } else if (now - stalledSince > STALL_TIMEOUT_NS) {
+                            break // Head stuck short of the end; don't hang on it.
+                        }
+                        sleep(5)
                     }
+                    if (!stopped) track.stop()
                 }
             } catch (_: Exception) {
                 // Track released underneath us during stop(); nothing to do.
