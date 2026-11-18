@@ -1,7 +1,10 @@
 package com.nekroz.meowsub.ui.browser
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nekroz.meowsub.R
@@ -21,6 +24,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class PathNode(val treeUri: Uri, val documentId: String, val name: String)
 
@@ -45,7 +50,14 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     private val _messages = Channel<UiMessage>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
+    private val prefs = app.getSharedPreferences("browser", Context.MODE_PRIVATE)
+
     private var listJob: Job? = null
+
+    init {
+        // Back where the app was left; a folder whose access was removed falls back to the root.
+        savedPath()?.takeIf { path -> _ui.value.folders.any { it.treeUri == path.first().treeUri } }?.let(::navigate)
+    }
 
     fun addFolder(treeUri: Uri) {
         viewModelScope.launch {
@@ -95,6 +107,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun navigate(path: List<PathNode>) {
         listJob?.cancel()
+        savePath(path)
         val node = path.lastOrNull()
         _ui.update { it.copy(path = path, listing = null, error = null, loading = node != null) }
         if (node == null) return
@@ -108,5 +121,27 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(loading = false, error = e.message ?: e.javaClass.simpleName) }
             }
         }
+    }
+
+    private fun savePath(path: List<PathNode>) = prefs.edit {
+        if (path.isEmpty()) {
+            remove(KEY_PATH)
+        } else {
+            val nodes = JSONArray()
+            path.forEach { nodes.put(JSONObject().put("id", it.documentId).put("name", it.name)) }
+            putString(KEY_PATH, JSONObject().put("tree", path.first().treeUri.toString()).put("nodes", nodes).toString())
+        }
+    }
+
+    private fun savedPath(): List<PathNode>? = runCatching {
+        val json = JSONObject(prefs.getString(KEY_PATH, null) ?: return null)
+        val tree = json.getString("tree").toUri()
+        val nodes = json.getJSONArray("nodes")
+        (0 until nodes.length()).map { nodes.getJSONObject(it) }
+            .map { PathNode(tree, it.getString("id"), it.getString("name")) }
+    }.getOrNull()?.takeIf { it.isNotEmpty() }
+
+    private companion object {
+        const val KEY_PATH = "path"
     }
 }

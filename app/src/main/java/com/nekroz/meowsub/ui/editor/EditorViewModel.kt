@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nekroz.meowsub.R
@@ -122,6 +123,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             whisper.state.collect { model -> _transcription.update { it.copy(model = model) } }
         }
+        reopenLastFile()
     }
 
     // region Open / close / save
@@ -129,6 +131,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun open(req: EditorRequest) {
         closeInternal()
         request = req
+        rememberOpenFile(req)
         subtitleUri = req.subtitle?.uri
         originalUri = req.original?.uri
         savedTranslation = emptyList()
@@ -213,9 +216,48 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Closes the file on the user's request (or after it failed to load): it won't be reopened. */
     fun close() {
         closeInternal()
+        forgetOpenFile()
         _ui.value = EditorUiState()
+    }
+
+    /**
+     * The open file is remembered until [close], so a file still open when the app was left
+     * (or the system ended it) opens again on the next start.
+     */
+    private fun rememberOpenFile(req: EditorRequest) = prefs.edit {
+        putString(KEY_LAST_TREE, req.treeUri.toString())
+        putString(KEY_LAST_PARENT, req.parentDocumentId)
+        putString(KEY_LAST_BASE, req.baseName)
+    }
+
+    private fun forgetOpenFile() = prefs.edit {
+        remove(KEY_LAST_TREE)
+        remove(KEY_LAST_PARENT)
+        remove(KEY_LAST_BASE)
+    }
+
+    /** Reopens the remembered file, re-listing its folder for fresh entries (it may have changed). */
+    private fun reopenLastFile() {
+        val tree = prefs.getString(KEY_LAST_TREE, null)?.toUri() ?: return
+        val parent = prefs.getString(KEY_LAST_PARENT, null) ?: return
+        val base = prefs.getString(KEY_LAST_BASE, null) ?: return
+        if (folders.savedFolders().none { it.treeUri == tree }) return forgetOpenFile() // access revoked
+        // Show the editor at once rather than flashing the folder list while it is looked up.
+        _ui.value = EditorUiState(isOpen = true, title = base, loading = true)
+        loadJobs += viewModelScope.launch {
+            val pair = try {
+                folders.list(tree, parent).pairs.firstOrNull { it.baseName == base }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (pair == null) close() // moved, renamed or deleted since
+            else open(EditorRequest(tree, parent, pair.baseName, pair.audio, pair.subtitle, pair.original))
+        }
     }
 
     /** Switches which file's text is shown and edited. Timing is shared, so nothing else changes. */
@@ -896,5 +938,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_WAVE_HEIGHT = "waveformHeightDp"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_TRACK = "track"
+        private const val KEY_LAST_TREE = "lastTree"
+        private const val KEY_LAST_PARENT = "lastParent"
+        private const val KEY_LAST_BASE = "lastBase"
     }
 }
