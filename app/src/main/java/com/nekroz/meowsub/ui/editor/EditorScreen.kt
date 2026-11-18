@@ -72,7 +72,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -112,9 +111,6 @@ import kotlin.math.pow
 fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
     val ui by vm.uiState.collectAsStateWithLifecycle()
     var showUnsavedDialog by remember { mutableStateOf(false) }
-    // Caret position in the selected line's text, used by "split".
-    var caret by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(ui.selectedId, ui.track) { caret = -1 }
 
     val requestClose = { if (ui.dirty) showUnsavedDialog = true else vm.close() }
     BackHandler(onBack = requestClose)
@@ -140,7 +136,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                     ui = ui,
                     transcription = transcription,
                     onBack = requestClose,
-                    onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.textOf(ui.track)?.length ?: 0) },
+                    onSplit = vm::splitSelected,
                     vm = vm,
                 )
                 TranscriptionStatus(transcription, onCancel = vm::cancelTranscription)
@@ -190,7 +186,6 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                     onSetEndAtCursor = vm::setEndAtCursor,
                     onText = vm::updateText,
                     onClearText = vm::clearText,
-                    onCaret = { caret = it },
                     onPrevious = vm::selectPrevious,
                     onNext = vm::selectNext,
                 )
@@ -673,7 +668,6 @@ private fun LineEditor(
     onSetEndAtCursor: () -> Unit,
     onText: (Long, String) -> Unit,
     onClearText: (Long) -> Unit,
-    onCaret: (Int) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -718,7 +712,6 @@ private fun LineEditor(
             value = tfv,
             onValueChange = {
                 tfv = it
-                onCaret(it.selection.start)
                 if (it.text != current) onText(line.id, it.text)
             },
             label = { Text(if (bilingual) trackLabel(track) else stringResource(R.string.field_text)) },

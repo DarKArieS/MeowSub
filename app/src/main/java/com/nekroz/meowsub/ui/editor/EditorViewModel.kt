@@ -39,7 +39,6 @@ import com.nekroz.meowsub.ui.UiMessage
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -537,26 +536,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // endregion
 
     /**
-     * Splits the selected line in two. The edited file's text is split at [caret]; the time at
-     * the play cursor when it lies inside the line, else proportionally to the caret, else in the
-     * middle. When bilingual, the other file's text stays with the first half.
+     * Splits the selected line in two at the play cursor when it lies inside the line, else in
+     * the middle. Both halves keep the full text (of both files, when bilingual), ready to be
+     * trimmed by hand.
      */
-    fun splitSelected(caret: Int) {
+    fun splitSelected() {
         val s = _ui.value
         val sel = s.selected ?: return
         val index = s.selectedIndex
         val cursor = currentTimeMs()
-        val text = sel.textOf(s.track)
-        val textLen = text.length
-        val splitMs = when {
-            cursor > sel.startMs && cursor < sel.endMs -> cursor
-            caret in 1 until textLen -> sel.startMs + (sel.durationMs * caret.toDouble() / textLen).roundToLong()
-            else -> sel.startMs + sel.durationMs / 2
-        }
-        val c = caret.coerceIn(0, textLen)
-        val first = sel.copy(endMs = splitMs).withText(s.track, text.substring(0, c).trimEnd())
-        val second = SubtitleLine(ids.getAndIncrement(), splitMs, sel.endMs, "")
-            .withText(s.track, text.substring(c).trimStart())
+        val splitMs = if (cursor > sel.startMs && cursor < sel.endMs) cursor else sel.startMs + sel.durationMs / 2
+        val first = sel.copy(endMs = splitMs)
+        val second = sel.copy(id = ids.getAndIncrement(), startMs = splitMs)
         val lines = s.lines.toMutableList().apply {
             set(index, first)
             add(index + 1, second)
