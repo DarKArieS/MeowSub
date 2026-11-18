@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Height
@@ -188,6 +189,7 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
                     onSetStartAtCursor = vm::setStartAtCursor,
                     onSetEndAtCursor = vm::setEndAtCursor,
                     onText = vm::updateText,
+                    onClearText = vm::clearText,
                     onCaret = { caret = it },
                     onPrevious = vm::selectPrevious,
                     onNext = vm::selectNext,
@@ -670,6 +672,7 @@ private fun LineEditor(
     onSetStartAtCursor: () -> Unit,
     onSetEndAtCursor: () -> Unit,
     onText: (Long, String) -> Unit,
+    onClearText: (Long) -> Unit,
     onCaret: (Int) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -719,6 +722,11 @@ private fun LineEditor(
                 if (it.text != current) onText(line.id, it.text)
             },
             label = { Text(if (bilingual) trackLabel(track) else stringResource(R.string.field_text)) },
+            trailingIcon = {
+                IconButton(onClick = { onClearText(line.id) }, enabled = tfv.text.isNotEmpty()) {
+                    Icon(Icons.Filled.Cancel, stringResource(R.string.action_clear_text))
+                }
+            },
             // One line tall, but still multi-line: Enter adds a line break and the text scrolls
             // vertically. (maxLines = 1 would make Compose treat it as single-line and drop Enter.)
             modifier = modifier.height(oneLineOutlinedFieldHeight()),

@@ -64,6 +64,7 @@
     <string name="set_end_at_cursor">終點設為游標位置</string>
     <string name="line_previous">上一句</string>
     <string name="line_next">下一句（最後一句時新增）</string>
+    <string name="action_clear_text">清空文字</string>
     <string name="no_selection">沒有選取字幕</string>
     <string name="subtitles_empty">還沒有字幕，按 + 新增</string>
 

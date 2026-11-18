@@ -358,6 +358,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (line.textOf(track) != text) replace(line.withText(track, text), coalesceKey = "text:$track:$id")
     }
 
+    /** Empties the edited text as its own undo step (not merged with typing before or after). */
+    fun clearText(id: Long) {
+        val track = _ui.value.track
+        val line = _ui.value.lines.firstOrNull { it.id == id } ?: return
+        if (line.textOf(track).isEmpty()) return
+        history.breakCoalescing()
+        replace(line.withText(track, ""))
+        history.breakCoalescing()
+    }
+
     fun setStart(id: Long, ms: Long) {
         val line = _ui.value.lines.firstOrNull { it.id == id } ?: return
         val start = ms.coerceAtLeast(0)
