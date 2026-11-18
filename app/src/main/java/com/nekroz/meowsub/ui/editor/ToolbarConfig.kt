@@ -2,13 +2,14 @@ package com.nekroz.meowsub.ui.editor
 
 /** Editor actions the user can arrange on the toolbar or tuck into the ⋮ menu. */
 enum class ToolbarAction {
-    UNDO, REDO, ADD, INSERT_BEFORE, DELETE, COPY, COPY_TEXT, CUT, PASTE, SPLIT, MERGE, SORT, SAVE;
+    UNDO, REDO, ADD, INSERT_BEFORE, DELETE, COPY, COPY_TEXT, CUT, PASTE, SPLIT, MERGE, SORT, SAVE,
+    TRANSCRIBE, UNLOAD_MODEL;
 
     /** Usable on the multi-select toolbar (acts on the ticked lines). */
     val inSelectionMode: Boolean get() = this in SELECTION_ACTIONS
 
     private companion object {
-        val SELECTION_ACTIONS = setOf(COPY, COPY_TEXT, CUT, PASTE, DELETE)
+        val SELECTION_ACTIONS = setOf(COPY, COPY_TEXT, CUT, PASTE, DELETE, TRANSCRIBE, UNLOAD_MODEL)
     }
 }
 
@@ -28,9 +29,11 @@ object ToolbarConfig {
         ToolbarItem(ToolbarAction.PASTE, true),
         ToolbarItem(ToolbarAction.SPLIT, true),
         ToolbarItem(ToolbarAction.MERGE, true),
+        ToolbarItem(ToolbarAction.TRANSCRIBE, true),
         ToolbarItem(ToolbarAction.SAVE, true),
         ToolbarItem(ToolbarAction.INSERT_BEFORE, false),
         ToolbarItem(ToolbarAction.SORT, false),
+        ToolbarItem(ToolbarAction.UNLOAD_MODEL, false),
     )
 
     /** e.g. "UNDO:1,REDO:1,SORT:0". */

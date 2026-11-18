@@ -2,7 +2,9 @@ package com.nekroz.meowsub.ui.editor
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -19,16 +21,26 @@ import com.nekroz.meowsub.data.subtitle.Cue
 import com.nekroz.meowsub.data.subtitle.SrtFormat
 import com.nekroz.meowsub.data.subtitle.SubtitleClipboard
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
-import com.nekroz.meowsub.data.subtitle.freeEndAfter
-import com.nekroz.meowsub.data.subtitle.freeStartBefore
 import com.nekroz.meowsub.data.subtitle.TextDecoding
 import com.nekroz.meowsub.data.subtitle.Track
 import com.nekroz.meowsub.data.subtitle.cues
 import com.nekroz.meowsub.data.subtitle.forTrack
+import com.nekroz.meowsub.data.subtitle.freeEndAfter
+import com.nekroz.meowsub.data.subtitle.freeStartBefore
 import com.nekroz.meowsub.data.subtitle.textOf
 import com.nekroz.meowsub.data.subtitle.withText
+import com.nekroz.meowsub.data.transcribe.AudioClip
+import com.nekroz.meowsub.data.transcribe.ModelLoadException
+import com.nekroz.meowsub.data.transcribe.TranscribeSettings
+import com.nekroz.meowsub.data.transcribe.TranscribeSettingsStore
+import com.nekroz.meowsub.data.transcribe.WhisperEngine
 import com.nekroz.meowsub.ui.UiMessage
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -40,10 +52,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToLong
 
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -52,6 +60,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val audioRepo = AudioRepository(app)
     private val clipboard = SubtitleClipboard(app)
     private val prefs = app.getSharedPreferences("editor", Context.MODE_PRIVATE)
+    private val transcribeStore = TranscribeSettingsStore(app)
+    private val whisper = WhisperEngine(app)
 
     private val _ui = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _ui.asStateFlow()
@@ -81,6 +91,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _snapGuide = MutableStateFlow<Long?>(null)
     val snapGuide: StateFlow<Long?> = _snapGuide.asStateFlow()
 
+    private val _transcribeSettings = MutableStateFlow(transcribeStore.load())
+    val transcribeSettings: StateFlow<TranscribeSettings> = _transcribeSettings.asStateFlow()
+
+    private val _transcription = MutableStateFlow(TranscriptionUi())
+    val transcription: StateFlow<TranscriptionUi> = _transcription.asStateFlow()
+
     private val _messages = Channel<UiMessage>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
@@ -99,6 +115,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private var player: PcmPlayer? = null
     private val loadJobs = mutableListOf<Job>()
     private var tickerJob: Job? = null
+    private var transcribeJob: Job? = null
+    private var transcribeRun = 0
+
+    init {
+        viewModelScope.launch {
+            whisper.state.collect { model -> _transcription.update { it.copy(model = model) } }
+        }
+    }
 
     // region Open / close / save
 
@@ -217,6 +241,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun closeInternal() {
+        abandonTranscription()
         loadJobs.forEach { it.cancel() }
         loadJobs.clear()
         stopPlayback()
@@ -728,6 +753,117 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // endregion
 
+    // region Transcription
+
+    fun openTranscribeSettings() = _transcription.update { it.copy(settingsOpen = true) }
+
+    fun closeTranscribeSettings() = _transcription.update { it.copy(settingsOpen = false) }
+
+    fun saveTranscribeSettings(settings: TranscribeSettings) {
+        _transcribeSettings.value = settings
+        transcribeStore.save(settings)
+        closeTranscribeSettings()
+    }
+
+    /** Keeps read access to a model file the user picked and returns its display name. */
+    fun modelFileName(uri: Uri): String {
+        val resolver = getApplication<Application>().contentResolver
+        runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val name = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        }.getOrNull()
+        return name ?: uri.lastPathSegment ?: uri.toString()
+    }
+
+    /**
+     * Transcribes the ticked lines, or else the active one, into the text being edited, loading
+     * the model first if needed. A run is one undo step; lines with no speech keep their text.
+     */
+    fun transcribe() {
+        if (transcribeJob?.isActive == true) return
+        val s = _ui.value
+        val targets = s.targetLines.sortedBy { it.startMs }
+        if (targets.isEmpty()) return
+        val source = audio ?: return message(R.string.msg_transcribe_no_audio)
+        val settings = _transcribeSettings.value
+        if (settings.modelUri == null) {
+            message(R.string.msg_transcribe_no_model)
+            openTranscribeSettings()
+            return
+        }
+        val track = s.track
+        val run = ++transcribeRun
+        val key = "transcribe:$run"
+        history.breakCoalescing()
+        _transcription.update { it.copy(done = 0, total = targets.size) }
+        transcribeJob = viewModelScope.launch {
+            var empty = 0
+            try {
+                targets.forEachIndexed { i, line ->
+                    val clip = withContext(Dispatchers.IO) {
+                        AudioClip.read(source, line.startMs - settings.paddingMs, line.endMs + settings.paddingMs)
+                    }
+                    val text = whisper.transcribe(clip, settings)
+                    if (text.isEmpty()) empty++ else setTranscribedText(line.id, track, text, key)
+                    _transcription.update { it.copy(done = i + 1) }
+                }
+                when {
+                    targets.size > 1 -> message(R.string.msg_transcribed, (targets.size - empty).toString(), targets.size.toString())
+                    empty > 0 -> message(R.string.msg_transcribe_empty)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ModelLoadException) {
+                message(R.string.msg_model_load_failed, e.message.orEmpty())
+            } catch (e: Exception) {
+                message(R.string.msg_transcribe_failed, e.message ?: e.javaClass.simpleName)
+            } finally {
+                // A cancelled run ends only once whisper.cpp returns; by then a newer run may own the progress.
+                if (run == transcribeRun) clearTranscribeProgress()
+            }
+        }
+    }
+
+    private fun clearTranscribeProgress() = _transcription.update { it.copy(done = 0, total = 0) }
+
+    private fun setTranscribedText(id: Long, track: Track, text: String, coalesceKey: String) {
+        val lines = _ui.value.lines
+        val line = lines.firstOrNull { it.id == id } ?: return // deleted meanwhile
+        if (line.textOf(track) == text) return
+        commit(lines.map { if (it.id == id) it.withText(track, text) else it }, coalesceKey = coalesceKey)
+    }
+
+    /**
+     * Stops transcribing. whisper.cpp only notices between computation passes, so the line in
+     * progress may run a few more seconds in the background; the UI is released right away and
+     * a new run simply waits for it.
+     */
+    fun cancelTranscription() {
+        if (abandonTranscription()) message(R.string.msg_transcribe_cancelled)
+    }
+
+    /** Cancels a running transcription and releases the UI at once; false if none was running. */
+    private fun abandonTranscription(): Boolean {
+        if (transcribeJob?.isActive != true) return false
+        transcribeJob?.cancel()
+        transcribeRun++ // its late `finally` must not touch a newer run's progress
+        clearTranscribeProgress()
+        return true
+    }
+
+    /** Frees the model's memory; a running transcription is cancelled first. */
+    fun unloadModel() {
+        abandonTranscription()
+        viewModelScope.launch {
+            whisper.unload()
+            message(R.string.msg_model_unloaded)
+        }
+    }
+
+    // endregion
+
     private fun message(res: Int, vararg args: String) {
         _messages.trySend(UiMessage(res, *args))
     }
@@ -742,6 +878,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         closeInternal()
+        // viewModelScope is gone: free the model once any aborted run has returned.
+        CoroutineScope(Dispatchers.IO).launch { whisper.unload() }
     }
 
     companion object {

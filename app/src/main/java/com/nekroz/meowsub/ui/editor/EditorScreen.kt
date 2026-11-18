@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.SettingsVoice
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
@@ -118,14 +120,30 @@ fun EditorScreen(vm: EditorViewModel, snackbar: SnackbarHostState) {
     // Registered later, so it wins while multi-select mode is active.
     BackHandler(enabled = ui.selectionMode, onBack = vm::clearSelection)
 
+    val transcription by vm.transcription.collectAsStateWithLifecycle()
+    if (transcription.settingsOpen) {
+        val settings by vm.transcribeSettings.collectAsStateWithLifecycle()
+        TranscribeSettingsDialog(
+            initial = settings,
+            loadedModel = transcription.loadedModel,
+            onPickedModel = vm::modelFileName,
+            onConfirm = vm::saveTranscribeSettings,
+            onDismiss = vm::closeTranscribeSettings,
+        )
+    }
+
     Scaffold(
         topBar = {
-            EditorTopBar(
-                ui = ui,
-                onBack = requestClose,
-                onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.textOf(ui.track)?.length ?: 0) },
-                vm = vm,
-            )
+            Column {
+                EditorTopBar(
+                    ui = ui,
+                    transcription = transcription,
+                    onBack = requestClose,
+                    onSplit = { vm.splitSelected(if (caret >= 0) caret else ui.selected?.textOf(ui.track)?.length ?: 0) },
+                    vm = vm,
+                )
+                TranscriptionStatus(transcription, onCancel = vm::cancelTranscription)
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
@@ -236,11 +254,16 @@ private fun editedFileLabel(ui: EditorUiState): String {
 }
 
 /** Binds every configurable toolbar action to the current editor state. */
-private fun editorActions(ui: EditorUiState, vm: EditorViewModel, onSplit: () -> Unit): Map<ToolbarAction, BarAction> {
+private fun editorActions(
+    ui: EditorUiState,
+    transcription: TranscriptionUi,
+    vm: EditorViewModel,
+    onSplit: () -> Unit,
+): Map<ToolbarAction, BarAction> {
     val hasSel = ui.selected != null
     val ready = !ui.loading
     fun a(action: ToolbarAction, enabled: Boolean, busy: Boolean = false, onClick: () -> Unit) =
-        action to BarAction(action.icon(), action.label(), enabled, busy, onClick)
+        action to BarAction(action.icon(), action.label(), enabled, busy, onClick = onClick)
     return mapOf(
         a(ToolbarAction.UNDO, ui.canUndo, onClick = vm::undo),
         a(ToolbarAction.REDO, ui.canRedo, onClick = vm::redo),
@@ -255,12 +278,79 @@ private fun editorActions(ui: EditorUiState, vm: EditorViewModel, onSplit: () ->
         a(ToolbarAction.MERGE, hasSel, onClick = vm::mergeWithNext),
         a(ToolbarAction.SORT, ui.lines.size > 1, onClick = vm::sortByTime),
         a(ToolbarAction.SAVE, ui.dirty && ready, busy = ui.saving, onClick = { vm.save() }),
+        transcribeAction(ui, transcription, vm),
+        unloadModelAction(transcription, vm),
     )
+}
+
+private fun transcribeAction(ui: EditorUiState, transcription: TranscriptionUi, vm: EditorViewModel) =
+    ToolbarAction.TRANSCRIBE to BarAction(
+        ToolbarAction.TRANSCRIBE.icon(), ToolbarAction.TRANSCRIBE.label(),
+        enabled = ui.targetLines.isNotEmpty() && ui.audio is AudioStatus.Ready,
+        busy = transcription.running,
+        onBusyClick = vm::cancelTranscription,
+        busyLabel = R.string.action_cancel_transcription,
+        onClick = vm::transcribe,
+    )
+
+private fun unloadModelAction(transcription: TranscriptionUi, vm: EditorViewModel) =
+    ToolbarAction.UNLOAD_MODEL to BarAction(
+        ToolbarAction.UNLOAD_MODEL.icon(), ToolbarAction.UNLOAD_MODEL.label(),
+        enabled = transcription.loadedModel != null,
+        onClick = vm::unloadModel,
+    )
+
+/** ⋮-menu entries that open settings, shown on both the main and the multi-select bar. */
+private fun settingsEntries(vm: EditorViewModel) = listOf(
+    BarAction(Icons.Filled.SettingsVoice, R.string.transcribe_settings, onClick = vm::openTranscribeSettings),
+)
+
+/** Strip under the app bar while a model loads or lines are being transcribed. */
+@Composable
+private fun TranscriptionStatus(transcription: TranscriptionUi, onCancel: () -> Unit) {
+    val loading = transcription.loadingModel
+    if (loading == null && !transcription.running) return
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier
+                    .padding(start = 16.dp, end = 4.dp)
+                    .heightIn(min = 40.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (loading != null) stringResource(R.string.transcribe_loading_model, loading)
+                    else stringResource(R.string.transcribe_progress, transcription.done + 1, transcription.total),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (transcription.running) {
+                    TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) }
+                }
+            }
+            if (loading != null || transcription.total <= 1) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(
+                    progress = { transcription.done.toFloat() / transcription.total },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> Unit, vm: EditorViewModel) {
+private fun EditorTopBar(
+    ui: EditorUiState,
+    transcription: TranscriptionUi,
+    onBack: () -> Unit,
+    onSplit: () -> Unit,
+    vm: EditorViewModel,
+) {
     val toolbar by vm.toolbar.collectAsStateWithLifecycle()
     var editingToolbar by rememberSaveable { mutableStateOf(false) }
     if (editingToolbar) {
@@ -271,10 +361,10 @@ private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> U
         )
     }
     if (ui.selectionMode) {
-        SelectionTopBar(ui, vm, toolbar, onEditToolbar = { editingToolbar = true })
+        SelectionTopBar(ui, transcription, vm, toolbar, onEditToolbar = { editingToolbar = true })
         return
     }
-    val bound = editorActions(ui, vm, onSplit)
+    val bound = editorActions(ui, transcription, vm, onSplit)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val barWidth = maxWidth - EditorBarReserved
         TopAppBar(
@@ -307,6 +397,7 @@ private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> U
                     menu = toolbar.filterNot { it.onBar }.mapNotNull { bound[it.action] },
                     maxBarWidth = barWidth,
                     onEditToolbar = { editingToolbar = true },
+                    settings = settingsEntries(vm),
                 )
             },
         )
@@ -321,11 +412,17 @@ private fun EditorTopBar(ui: EditorUiState, onBack: () -> Unit, onSplit: () -> U
 @Composable
 private fun SelectionTopBar(
     ui: EditorUiState,
+    transcription: TranscriptionUi,
     vm: EditorViewModel,
     toolbar: List<ToolbarItem>,
     onEditToolbar: () -> Unit,
 ) {
     fun bind(action: ToolbarAction): BarAction {
+        when (action) {
+            ToolbarAction.TRANSCRIBE -> return transcribeAction(ui, transcription, vm).second
+            ToolbarAction.UNLOAD_MODEL -> return unloadModelAction(transcription, vm).second
+            else -> Unit
+        }
         val onClick: () -> Unit = when (action) {
             ToolbarAction.COPY -> vm::copySelection
             ToolbarAction.COPY_TEXT -> vm::copyPlainText
@@ -362,6 +459,7 @@ private fun SelectionTopBar(
                     menu = items.filterNot { it.onBar }.map { bind(it.action) },
                     maxBarWidth = barWidth,
                     onEditToolbar = onEditToolbar,
+                    settings = settingsEntries(vm),
                 )
             },
         )

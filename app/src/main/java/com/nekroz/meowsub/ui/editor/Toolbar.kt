@@ -33,8 +33,11 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.Eject
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Transcribe
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.outlined.Delete
@@ -80,12 +83,17 @@ import androidx.compose.ui.zIndex
 import com.nekroz.meowsub.R
 import com.nekroz.meowsub.ui.editor.ToolbarConfig.moved
 
-/** A toolbar button bound to its current state. [busy] shows a spinner (e.g. while saving). */
+/**
+ * A toolbar button bound to its current state. [busy] shows a spinner (e.g. while saving);
+ * with [onBusyClick], the spinner can be tapped (e.g. to cancel), labelled [busyLabel].
+ */
 class BarAction(
     val icon: ImageVector,
     @param:StringRes val label: Int,
     val enabled: Boolean = true,
     val busy: Boolean = false,
+    val onBusyClick: (() -> Unit)? = null,
+    @param:StringRes val busyLabel: Int = label,
     val onClick: () -> Unit,
 )
 
@@ -103,6 +111,8 @@ fun ToolbarAction.icon(): ImageVector = when (this) {
     ToolbarAction.MERGE -> Icons.AutoMirrored.Filled.CallMerge
     ToolbarAction.SORT -> Icons.AutoMirrored.Filled.Sort
     ToolbarAction.SAVE -> Icons.Filled.Save
+    ToolbarAction.TRANSCRIBE -> Icons.Filled.Transcribe
+    ToolbarAction.UNLOAD_MODEL -> Icons.Filled.Eject
 }
 
 @StringRes
@@ -120,6 +130,8 @@ fun ToolbarAction.label(): Int = when (this) {
     ToolbarAction.MERGE -> R.string.action_merge
     ToolbarAction.SORT -> R.string.action_sort
     ToolbarAction.SAVE -> R.string.action_save
+    ToolbarAction.TRANSCRIBE -> R.string.action_transcribe
+    ToolbarAction.UNLOAD_MODEL -> R.string.action_unload_model
 }
 
 private val ActionSlot = 48.dp
@@ -127,7 +139,7 @@ private val FadeWidth = 24.dp
 
 /**
  * App bar actions: [bar] in a row that scrolls sideways when wider than [maxBarWidth],
- * followed by a ⋮ menu with [menu] and an "edit toolbar" entry.
+ * followed by a ⋮ menu with [menu], then [settings] and an "edit toolbar" entry.
  */
 @Composable
 fun RowScope.ScrollableActions(
@@ -135,6 +147,7 @@ fun RowScope.ScrollableActions(
     menu: List<BarAction>,
     maxBarWidth: Dp,
     onEditToolbar: () -> Unit,
+    settings: List<BarAction> = emptyList(),
 ) {
     val scroll = rememberScrollState()
     Row(
@@ -145,7 +158,16 @@ fun RowScope.ScrollableActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         bar.forEach { action ->
-            if (action.busy) {
+            val onBusyClick = action.onBusyClick
+            if (action.busy && onBusyClick != null) {
+                // Spinner around a stop sign: tapping it cancels.
+                IconButton(onClick = onBusyClick) {
+                    Box(contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                        Icon(Icons.Filled.Stop, stringResource(action.busyLabel), Modifier.size(16.dp))
+                    }
+                }
+            } else if (action.busy) {
                 Box(Modifier.size(ActionSlot), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
@@ -164,17 +186,29 @@ fun RowScope.ScrollableActions(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             menu.forEach { action ->
+                val onBusyClick = action.onBusyClick
+                DropdownMenuItem(
+                    text = { Text(stringResource(if (action.busy) action.busyLabel else action.label)) },
+                    leadingIcon = { Icon(if (action.busy && onBusyClick != null) Icons.Filled.Stop else action.icon, null) },
+                    enabled = if (action.busy) onBusyClick != null else action.enabled,
+                    onClick = {
+                        open = false
+                        if (action.busy) onBusyClick?.invoke() else action.onClick()
+                    },
+                )
+            }
+            if (menu.isNotEmpty()) HorizontalDivider()
+            settings.forEach { action ->
                 DropdownMenuItem(
                     text = { Text(stringResource(action.label)) },
                     leadingIcon = { Icon(action.icon, null) },
-                    enabled = action.enabled && !action.busy,
+                    enabled = action.enabled,
                     onClick = {
                         open = false
                         action.onClick()
                     },
                 )
             }
-            if (menu.isNotEmpty()) HorizontalDivider()
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.toolbar_edit)) },
                 leadingIcon = { Icon(Icons.Filled.Tune, null) },

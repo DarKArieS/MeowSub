@@ -5,6 +5,7 @@ import com.nekroz.meowsub.data.audio.WaveformPeaks
 import com.nekroz.meowsub.data.files.DocEntry
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
 import com.nekroz.meowsub.data.subtitle.Track
+import com.nekroz.meowsub.data.transcribe.WhisperEngine
 
 /**
  * What to open: an audio file and/or SRT that share [baseName] inside a folder, plus the
@@ -58,6 +59,20 @@ data class EditorUiState(
     /** Lines that copy/cut/delete act on: the ticked lines, or else the active line. */
     val targetLines: List<SubtitleLine>
         get() = if (selectionMode) lines.filter { it.id in checkedIds } else listOfNotNull(selected)
+}
+
+/** Speech-to-text status: the model in memory and the progress of a running transcription. */
+data class TranscriptionUi(
+    val model: WhisperEngine.State = WhisperEngine.State.Unloaded,
+    /** Lines finished so far; [total] is 0 while no transcription runs. */
+    val done: Int = 0,
+    val total: Int = 0,
+    /** The settings dialog is shown (also opened when transcribing without a model file). */
+    val settingsOpen: Boolean = false,
+) {
+    val running: Boolean get() = total > 0
+    val loadedModel: String? get() = (model as? WhisperEngine.State.Loaded)?.name
+    val loadingModel: String? get() = (model as? WhisperEngine.State.Loading)?.name
 }
 
 /** Visible waveform window: left edge time, horizontal scale and vertical amplitude gain. */

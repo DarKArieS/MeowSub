@@ -17,6 +17,18 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // whisper.cpp is built for 64-bit ARM only: every phone that runs Android 16 is.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    // Speech-to-text: whisper.cpp (git submodule in third_party/) with a small JNI bridge.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {
