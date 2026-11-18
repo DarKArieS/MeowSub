@@ -22,6 +22,7 @@ import com.nekroz.meowsub.data.subtitle.SrtFormat
 import com.nekroz.meowsub.data.subtitle.SubtitleClipboard
 import com.nekroz.meowsub.data.subtitle.SubtitleLine
 import com.nekroz.meowsub.data.subtitle.TextDecoding
+import com.nekroz.meowsub.data.subtitle.TextJoin
 import com.nekroz.meowsub.data.subtitle.Track
 import com.nekroz.meowsub.data.subtitle.cues
 import com.nekroz.meowsub.data.subtitle.forTrack
@@ -558,12 +559,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val sel = s.selected ?: return
         val index = s.selectedIndex
         val next = s.lines.getOrNull(index + 1) ?: return message(R.string.msg_no_next_line)
-        fun join(a: String, b: String) = listOf(a, b).filter { it.isNotBlank() }.joinToString("\n")
         val merged = sel.copy(
             startMs = min(sel.startMs, next.startMs),
             endMs = max(sel.endMs, next.endMs),
-            text = join(sel.text, next.text),
-            original = join(sel.original, next.original),
+            text = TextJoin.join(sel.text, next.text),
+            original = TextJoin.join(sel.original, next.original),
         )
         val lines = s.lines.toMutableList().apply {
             set(index, merged)
