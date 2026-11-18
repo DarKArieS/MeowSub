@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -35,7 +36,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -98,22 +102,42 @@ fun BrowserScreen(vm: BrowserViewModel, snackbar: SnackbarHostState, onOpen: (Me
         Box(Modifier.fillMaxSize().padding(padding)) {
             val listing = ui.listing
             when {
-                ui.current == null -> FolderRoot(ui.folders, vm::openFolder, vm::removeFolder)
+                ui.current == null -> FolderRoot(ui.folders, rememberListState(vm, ui.current), vm::openFolder, vm::removeFolder)
                 ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 ui.error != null -> CenterMessage(stringResource(R.string.browser_error, ui.error!!), null)
-                listing != null -> FolderContent(listing, vm::openDirectory, onOpen)
+                listing != null -> FolderContent(listing, rememberListState(vm, ui.current), vm::openDirectory, onOpen)
             }
         }
     }
 }
 
+/**
+ * Scroll state for the list of [node] (null = root) that starts where that list was last left,
+ * so going back to a folder (or returning from the editor) shows the same place.
+ */
 @Composable
-private fun FolderRoot(folders: List<SavedFolder>, onOpen: (SavedFolder) -> Unit, onRemove: (SavedFolder) -> Unit) {
+private fun rememberListState(vm: BrowserViewModel, node: PathNode?): LazyListState {
+    val key = vm.scrollKey(node)
+    val state = remember(key) { vm.scrollPosition(key).let { (index, offset) -> LazyListState(index, offset) } }
+    LaunchedEffect(state) {
+        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+            .collect { vm.saveScrollPosition(key, it) }
+    }
+    return state
+}
+
+@Composable
+private fun FolderRoot(
+    folders: List<SavedFolder>,
+    listState: LazyListState,
+    onOpen: (SavedFolder) -> Unit,
+    onRemove: (SavedFolder) -> Unit,
+) {
     if (folders.isEmpty()) {
         CenterMessage(stringResource(R.string.browser_empty_title), stringResource(R.string.browser_empty_body))
         return
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 88.dp)) {
         items(folders, key = { it.treeUri.toString() }) { folder ->
             ListItem(
                 modifier = Modifier.clickable { onOpen(folder) },
@@ -138,12 +162,17 @@ private fun FolderRoot(folders: List<SavedFolder>, onOpen: (SavedFolder) -> Unit
 }
 
 @Composable
-private fun FolderContent(listing: FolderListing, onDirectory: (DocEntry) -> Unit, onOpen: (MediaPair) -> Unit) {
+private fun FolderContent(
+    listing: FolderListing,
+    listState: LazyListState,
+    onDirectory: (DocEntry) -> Unit,
+    onOpen: (MediaPair) -> Unit,
+) {
     if (listing.directories.isEmpty() && listing.pairs.isEmpty()) {
         CenterMessage(stringResource(R.string.browser_folder_empty), null)
         return
     }
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState) {
         items(listing.directories, key = { "d:" + it.documentId }) { dir ->
             ListItem(
                 modifier = Modifier.clickable { onDirectory(dir) },

@@ -54,6 +54,9 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     private var listJob: Job? = null
 
+    /** First visible item and its scroll offset per list, keyed by [scrollKey]. */
+    private val scrollPositions = HashMap<String, Pair<Int, Int>>()
+
     init {
         // Back where the app was left; a folder whose access was removed falls back to the root.
         savedPath()?.takeIf { path -> _ui.value.folders.any { it.treeUri == path.first().treeUri } }?.let(::navigate)
@@ -98,6 +101,16 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         _ui.update { it.copy(folders = repo.savedFolders()) }
         navigate(_ui.value.path)
+    }
+
+    /** Identifies the list shown for [node] (null = the saved-folders root) for [scrollPosition]. */
+    fun scrollKey(node: PathNode?): String = node?.let { "${it.treeUri}|${it.documentId}" } ?: ""
+
+    /** Where the list for [key] was left: first visible item and its scroll offset. */
+    fun scrollPosition(key: String): Pair<Int, Int> = scrollPositions[key] ?: (0 to 0)
+
+    fun saveScrollPosition(key: String, position: Pair<Int, Int>) {
+        scrollPositions[key] = position
     }
 
     fun requestFor(pair: MediaPair): EditorRequest? {
